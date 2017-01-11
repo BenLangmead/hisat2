@@ -161,6 +161,26 @@ public:
         }
         rg_file.close();
     }
+	
+	void to_dot(const string& fname) {
+        ofstream dot_file(fname.c_str());
+        if(!dot_file.good()) {
+            cerr << "Could not open output dot file for writing a "
+			     << "reference graph: \"" << fname << "\"" << endl;
+            throw 1;
+        }
+		dot_file << "digraph HISAT2_digraph {" << endl;
+        for(index_t i = 0; i < nodes.size(); i++) {
+            dot_file << "    " << i // nodes[i].value
+			         << " [label=\"" << nodes[i].label << "\"];" << endl;
+        }
+        for(index_t i = 0; i < edges.size(); i++) {
+            dot_file << "    " << edges[i].from
+			         << " -> " << edges[i].to << ";" << endl;
+        }
+		dot_file << "}" << endl;
+		dot_file.close();
+	}
     
     void nullify() {
         nodes.nullify();
@@ -592,6 +612,10 @@ RefGraph<index_t>::RefGraph(const SString<char>& s,
             throw NongraphException();
         }
 
+#ifdef DOT_PRINT
+		to_dot("/tmp/pre_revdet.dot");
+#endif
+
         if(multipleHeadNodes) {
             if(!isReverseDeterministic(nodes, edges)) {
                 if(verbose) cerr << "\tis not reverse-deterministic, so reverse-determinize..." << endl;
@@ -786,6 +810,10 @@ RefGraph<index_t>::RefGraph(const SString<char>& s,
             throw NongraphException();
         }
 
+#ifdef DOT_PRINT
+		to_dot("/tmp/pre_revdet.dot");
+#endif
+
         if(!isReverseDeterministic(nodes, edges)) {
             if(verbose) cerr << "\tis not reverse-deterministic, so reverse-determinize..." << endl;
             reverseDeterminize(nodes, edges, lastNode);
@@ -808,6 +836,10 @@ RefGraph<index_t>::RefGraph(const SString<char>& s,
         cout << i << "\t" << e.from << " --> " << e.to << endl;
     }
     exit(1);
+#endif
+
+#ifdef DOT_PRINT
+	to_dot("/tmp/post_revdet.dot");
 #endif
 }
 
@@ -1676,6 +1708,34 @@ private:
     };
     static void generateEdgesCounter(void* vp);
     static void generateEdgesMaker(void* vp);
+
+	void to_dot(const string& fname) {
+        ofstream dot_file(fname.c_str());
+        if(!dot_file.good()) {
+            cerr << "Could not open output dot file for writing a "
+			     << "reference graph: \"" << fname << "\"" << endl;
+            throw 1;
+        }
+		dot_file << "digraph HISAT2_digraph {" << endl;
+		std::map<index_t, char> node_label;
+        for(index_t i = 0; i < edges.size(); i++) {
+			if(node_label.find(edges[i].from) != node_label.end()) {
+				if(edges[i].label != node_label[edges[i].from]) {
+					throw 1;
+				}
+			}
+            dot_file << "    " << edges[i].from
+					 << " [label=\"" << edges[i].label << "\"]"
+			         << ";" << endl;
+			if(edges[i].label != 'Z') {
+				dot_file << "    " << edges[i].from
+						 << " -> " << edges[i].to
+						 << ";" << endl;
+			}
+        }
+		dot_file << "}" << endl;
+		dot_file.close();
+	}
 
 private:
     int             nthreads;
@@ -2591,6 +2651,11 @@ bool PathGraph<index_t>::generateEdges(RefGraph<index_t>& base)
 
     if(verbose) cerr << "SORT, Make index: " << time(0) - indiv << endl;
     if(verbose) cerr << "TOTAL: " << time(0) - overall << endl;
+
+#ifdef DOT_PRINT
+	to_dot("/tmp/post_path_doubling.dot");
+#endif
+
     return true;
 
 //-----------------------------------------------------------------------------------------------------

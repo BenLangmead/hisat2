@@ -684,6 +684,7 @@ public:
 		const PerReadMetrics& prm,            // per-read metrics
 		const Mapq&           mapq,           // MAPQ generator
 		const Scoring&        sc,             // scoring scheme
+		bool                  reportBoth,
 		bool                  getLock = true) // true iff lock held by caller
 	{
 		// There are a few scenarios:
@@ -724,13 +725,15 @@ public:
 				append(o, staln, threadId, rd1, rd2, rdid, r1, r2pri, summ,
 				       ssm1, ssm2, flags1, flags2, prm, mapq, sc, false);
 			}
-			for(size_t i = 1; i < select2->size(); i++) {
-				AlnRes* r2 = ((rs2 != NULL) ? &rs2->get((*select2)[i]) : NULL);
-				append(o, staln, threadId, rd2, rd1, rdid, r2, r1pri, summ,
-				       ssm2, ssm1, flags2, flags1, prm, mapq, sc, false);
+			if(reportBoth) {
+				for(size_t i = 1; i < select2->size(); i++) {
+					AlnRes* r2 = ((rs2 != NULL) ? &rs2->get((*select2)[i]) : NULL);
+					append(o, staln, threadId, rd2, rd1, rdid, r2, r1pri, summ,
+						   ssm2, ssm1, flags2, flags1, prm, mapq, sc, false);
+				}
 			}
 		} else {
-			// Handle cases 1-4
+			// Handle cases 1-3 and 5
 			for(size_t i = 0; i < select1.size(); i++) {
 				AlnRes* r1 = ((rs1 != NULL) ? &rs1->get(select1[i]) : NULL);
 				AlnRes* r2 = ((rs2 != NULL) ? &rs2->get(select1[i]) : NULL);
@@ -1309,8 +1312,26 @@ protected:
 		const EList<AlnRes>* rs2,    // alignments to select from (mate 2, or NULL)
 		uint64_t             num,    // number of alignments to select
 		EList<size_t>&       select, // prioritized list to put results in
+		const EList<AlnRes>* rs1u,   // alignments to select from (mate 1)
+		const EList<AlnRes>* rs2u,   // alignments to select from (mate 2, or NULL)
+		AlnScore&            bestUScore,
+		AlnScore&            bestUDist,
+		AlnScore&            bestP1Score,
+		AlnScore&            bestP1Dist,
+		AlnScore&            bestP2Score,
+		AlnScore&            bestP2Dist,
+		AlnScore&            bestCScore,
+		AlnScore&            bestCDist,
+		AlnScore&            bestUnchosenUScore,
+		AlnScore&            bestUnchosenUDist,
+		AlnScore&            bestUnchosenP1Score,
+		AlnScore&            bestUnchosenP1Dist,
+		AlnScore&            bestUnchosenP2Score,
+		AlnScore&            bestUnchosenP2Dist,
+		AlnScore&            bestUnchosenCScore,
+		AlnScore&            bestUnchosenCDist,
 		RandomSource&        rnd)
-		const;
+	const;
 
 	AlnSink<index_t>& g_;     // global alignment sink
 	ReportingParams   rp_;    // reporting parameters: khits, mhits etc
@@ -1346,7 +1367,7 @@ protected:
 	EList<size_t>     select2_; // parallel to rs1_/rs2_ - which to report
 	ReportingState    st_;      // reporting state - what's left to do?
 	
-	EList<std::pair<TAlScore, size_t> > selectBuf_;
+	EList<std::pair<AlnScore, size_t> > selectBuf_;
 	BTString obuf_;
 	StackedAln staln_;
     
@@ -1856,17 +1877,66 @@ void AlnSinkWrap<index_t>::finishRead(
             AlnSetSumm concordSumm(
                                    rd1_, rd2_, &rs1_, &rs2_, &rs1u_, &rs2u_,
                                    exhaust1, exhaust2, -1, -1);
-            
+			
+			assert(sortByScore);
 			// Possibly select a random subset
-			size_t off;
-			if(sortByScore) {
-				// Sort by score then pick from low to high
-				off = selectByScore(&rs1_, &rs2_, nconcord, select1_, rnd);
-			} else {
-				// Select subset randomly
-				off = selectAlnsToReport(rs1_, nconcord, select1_, rnd);
-			}
-            
+			//size_t off;
+			//if(sortByScore) {
+			//	// Sort by score then pick from low to high
+			//	off = selectByScore(&rs1_, &rs2_, nconcord, select1_, rnd);
+			//} else {
+			//	// Select subset randomly
+			//	off = selectAlnsToReport(rs1_, nconcord, select1_, rnd);
+			//}
+
+			// Sort by score then pick from low to high
+			AlnScore bestUScore, bestP1Score, bestP2Score, bestCScore;
+			AlnScore bestUDist, bestP1Dist, bestP2Dist, bestCDist;
+			AlnScore bestUnchosenUScore, bestUnchosenP1Score, bestUnchosenP2Score, bestUnchosenCScore;
+			AlnScore bestUnchosenUDist, bestUnchosenP1Dist, bestUnchosenP2Dist, bestUnchosenCDist;
+			// TODO: should probably package these variables up so it's not
+			// such a pain to pass them around
+			size_t off = selectByScore(
+				&rs1_, &rs2_,
+				nconcord, select1_,
+				&rs1u_, &rs2u_,
+				bestUScore,
+				bestUDist,
+				bestP1Score,
+				bestP1Dist,
+				bestP2Score,
+				bestP2Dist,
+				bestCScore,
+				bestCDist,
+				bestUnchosenUScore,
+				bestUnchosenUDist,
+				bestUnchosenP1Score,
+				bestUnchosenP1Dist,
+				bestUnchosenP2Score,
+				bestUnchosenP2Dist,
+				bestUnchosenCScore,
+				bestUnchosenCDist,
+				rnd);
+			concordSumm.setBest(
+				bestUScore,
+				bestUDist,
+				bestP1Score,
+				bestP1Dist,
+				bestP2Score,
+				bestP2Dist,
+				bestCScore,
+				bestCDist,
+				bestUnchosenUScore,
+				bestUnchosenUDist,
+				bestUnchosenP1Score,
+				bestUnchosenP1Dist,
+				bestUnchosenP2Score,
+				bestUnchosenP2Dist,
+				bestUnchosenCScore,
+				bestUnchosenCDist);
+			assert(concordSumm.bestScore(true).valid());
+			assert(concordSumm.bestScore(false).valid());
+			
             concordSumm.numAlnsPaired(select1_.size());
             
 			assert_lt(off, rs1_.size());
@@ -1937,7 +2007,8 @@ void AlnSinkWrap<index_t>::finishRead(
 						  &flags2,
 						  prm,
 						  mapq_,
-						  sc);
+						  sc,
+						  false);
 			if(pairMax) {
 				met.nconcord_rep++;
 			} else {
@@ -1999,14 +2070,56 @@ void AlnSinkWrap<index_t>::finishRead(
 				assert(rs1_[i].isFraglenSet() == rs2_[i].isFraglenSet());
 				assert(!rs1_[i].isFraglenSet() || abs(rs1_[i].fragmentLength()) == abs(rs2_[i].fragmentLength()));
 			}
-			ASSERT_ONLY(size_t off);
-			if(sortByScore) {
-				// Sort by score then pick from low to high
-				ASSERT_ONLY(off =) selectByScore(&rs1_, &rs2_, ndiscord, select1_, rnd);
-			} else {
-				// Select subset randomly
-				ASSERT_ONLY(off =) selectAlnsToReport(rs1_, ndiscord, select1_, rnd);
-			}
+			assert(sortByScore);
+			//if(sortByScore) {
+			//	// Sort by score then pick from low to high
+			//	ASSERT_ONLY(off =) selectByScore(&rs1_, &rs2_, ndiscord, select1_, rnd);
+			//} else {
+			//	// Select subset randomly
+			//	ASSERT_ONLY(off =) selectAlnsToReport(rs1_, ndiscord, select1_, rnd);
+			//}
+			AlnScore bestUScore, bestP1Score, bestP2Score, bestCScore;
+			AlnScore bestUDist, bestP1Dist, bestP2Dist, bestCDist;
+			AlnScore bestUnchosenUScore, bestUnchosenP1Score, bestUnchosenP2Score, bestUnchosenCScore;
+			AlnScore bestUnchosenUDist, bestUnchosenP1Dist, bestUnchosenP2Dist, bestUnchosenCDist;
+			ASSERT_ONLY(size_t off =) selectByScore(
+				&rs1_, &rs2_,
+				ndiscord, select1_,
+				&rs1u_, &rs2u_,
+				bestUScore,
+				bestUDist,
+				bestP1Score,
+				bestP1Dist,
+				bestP2Score,
+				bestP2Dist,
+				bestCScore,
+				bestCDist,
+				bestUnchosenUScore,
+				bestUnchosenUDist,
+				bestUnchosenP1Score,
+				bestUnchosenP1Dist,
+				bestUnchosenP2Score,
+				bestUnchosenP2Dist,
+				bestUnchosenCScore,
+				bestUnchosenCDist,
+				rnd);
+			discordSumm.setBest(
+				bestUScore,
+				bestUDist,
+				bestP1Score,
+				bestP1Dist,
+				bestP2Score,
+				bestP2Dist,
+				bestCScore,
+				bestCDist,
+				bestUnchosenUScore,
+				bestUnchosenUDist,
+				bestUnchosenP1Score,
+				bestUnchosenP1Dist,
+				bestUnchosenP2Score,
+				bestUnchosenP2Dist,
+				bestUnchosenCScore,
+				bestUnchosenCDist);
 			assert_eq(0, off);
 			assert(!select1_.empty());
 			g_.reportHits(
@@ -2028,7 +2141,8 @@ void AlnSinkWrap<index_t>::finishRead(
 						  &flags2,
 						  prm,
 						  mapq_,
-						  sc);
+						  sc,
+						  false);
 			met.nconcord_0++;
 			met.ndiscord++;
 			init_ = false;
@@ -2041,7 +2155,84 @@ void AlnSinkWrap<index_t>::finishRead(
 		// the mates having more than one.
 		//assert(nunpair1 == 0 || nunpair2 == 0);
 		assert(!pairMax);
-			
+		
+		// Update counters given that one mate didn't align
+		if(readIsPair()) {
+			met.nconcord_0++;
+		}
+		if(rd1_ != NULL) {
+			if(nunpair1 > 0) {
+				// Update counters
+				if(readIsPair()) {
+					if(unpair1Max) met.nunp_0_rep++;
+					else {
+						met.nunp_0_uni++;
+						assert(!rs1u_.empty());
+						if(rs1u_.size() == 1) {
+							met.nunp_0_uni1++;
+						} else {
+							met.nunp_0_uni2++;
+						}
+					}
+				} else {
+					if(unpair1Max) met.nunp_rep++;
+					else {
+						met.nunp_uni++;
+						assert(!rs1u_.empty());
+						if(rs1u_.size() == 1) {
+							met.nunp_uni1++;
+						} else {
+							met.nunp_uni2++;
+						}
+					}
+				}
+			} else if(unpair1Max) {
+				// Update counters
+				if(readIsPair())   met.nunp_0_rep++;
+				else               met.nunp_rep++;
+			} else {
+				// Update counters
+				if(readIsPair())   met.nunp_0_0++;
+				else               met.nunp_0++;
+			}
+		}
+		if(rd2_ != NULL) {
+			if(nunpair2 > 0) {
+				// Update counters
+				if(readIsPair()) {
+					if(unpair2Max) met.nunp_0_rep++;
+					else {
+						assert(!rs2u_.empty());
+						met.nunp_0_uni++;
+						if(rs2u_.size() == 1) {
+							met.nunp_0_uni1++;
+						} else {
+							met.nunp_0_uni2++;
+						}
+					}
+				} else {
+					if(unpair2Max) met.nunp_rep++;
+					else {
+						assert(!rs2u_.empty());
+						met.nunp_uni++;
+						if(rs2u_.size() == 1) {
+							met.nunp_uni1++;
+						} else {
+							met.nunp_uni2++;
+						}
+					}
+				}
+			} else if(unpair2Max) {
+				// Update counters
+				if(readIsPair())   met.nunp_0_rep++;
+				else               met.nunp_rep++;
+			} else {
+				// Update counters
+				if(readIsPair())   met.nunp_0_0++;
+				else               met.nunp_0++;
+			}
+		}
+
 		const AlnRes *repRs1 = NULL, *repRs2 = NULL;
 		AlnSetSumm summ1, summ2;
 		AlnFlags flags1, flags2;
@@ -2054,26 +2245,70 @@ void AlnSinkWrap<index_t>::finishRead(
 		// g_.reportHits(...) with information about both mates potentially
 		if(rep1) {
 			// Mate 1 aligned at least once
-            if(rep2) {
-                summ1.init(
-					   rd1_, rd2_, NULL, NULL, &rs1u_, &rs2u_,
+            //if(rep2) {
+            //    summ1.init(
+			//		   rd1_, rd2_, NULL, NULL, &rs1u_, &rs2u_,
+			//		   exhaust1, exhaust2, -1, -1);
+            //} else {
+            //    summ1.init(
+            //               rd1_, NULL, NULL, NULL, &rs1u_, NULL,
+            //               exhaust1, exhaust2, -1, -1);
+            //}
+			summ1.init(
+					   rd1_, NULL, NULL, NULL, &rs1u_, NULL,
 					   exhaust1, exhaust2, -1, -1);
-            } else {
-                summ1.init(
-                           rd1_, NULL, NULL, NULL, &rs1u_, NULL,
-                           exhaust1, exhaust2, -1, -1);
-            }
-			size_t off;
-			if(sortByScore) {
-				// Sort by score then pick from low to high
-				off = selectByScore(&rs1u_, NULL, nunpair1, select1_, rnd);
-			} else {
-				// Select subset randomly
-				off = selectAlnsToReport(rs1u_, nunpair1, select1_, rnd);
-			}
+			// Sort by score then pick from low to high
+			AlnScore bestUScore, bestP1Score, bestP2Score, bestCScore;
+			AlnScore bestUDist, bestP1Dist, bestP2Dist, bestCDist;
+			AlnScore bestUnchosenUScore, bestUnchosenP1Score, bestUnchosenP2Score, bestUnchosenCScore;
+			AlnScore bestUnchosenUDist, bestUnchosenP1Dist, bestUnchosenP2Dist, bestUnchosenCDist;
+			size_t off = selectByScore(
+				&rs1u_, NULL, nunpair1, select1_, NULL, NULL,
+				bestUScore,
+				bestUDist,
+				bestP1Score,
+				bestP1Dist,
+				bestP2Score,
+				bestP2Dist,
+				bestCScore,
+				bestCDist,
+				bestUnchosenUScore,
+				bestUnchosenUDist,
+				bestUnchosenP1Score,
+				bestUnchosenP1Dist,
+				bestUnchosenP2Score,
+				bestUnchosenP2Dist,
+				bestUnchosenCScore,
+				bestUnchosenCDist,
+				rnd);
+			summ1.setBest(
+				bestUScore,
+				bestUDist,
+				bestP1Score,
+				bestP1Dist,
+				bestP2Score,
+				bestP2Dist,
+				bestCScore,
+				bestCDist,
+				bestUnchosenUScore,
+				bestUnchosenUDist,
+				bestUnchosenP1Score,
+				bestUnchosenP1Dist,
+				bestUnchosenP2Score,
+				bestUnchosenP2Dist,
+				bestUnchosenCScore,
+				bestUnchosenCDist);
+			repRs1 = &rs1u_[off];
+			assert(sortByScore);
+			//if(sortByScore) {
+			//	// Sort by score then pick from low to high
+			//	off = selectByScore(&rs1u_, NULL, nunpair1, select1_, rnd);
+			//} else {
+			//	// Select subset randomly
+			//	off = selectAlnsToReport(rs1u_, nunpair1, select1_, rnd);
+			//}
             summ1.numAlns1(select1_.size());
             summ2.numAlns1(select1_.size());
-			repRs1 = &rs1u_[off];
 		} else if(rd1_ != NULL) {
 			// Mate 1 failed to align - don't do anything yet.  First we want
 			// to collect information on mate 2 in case that factors into the
@@ -2082,23 +2317,67 @@ void AlnSinkWrap<index_t>::finishRead(
 		}
 		
 		if(rep2) {
-            if(rep1) {
-                summ2.init(
-                           rd1_, rd2_, NULL, NULL, &rs1u_, &rs2u_,
-                           exhaust1, exhaust2, -1, -1);
-            } else {
-                summ2.init(
-                           NULL, rd2_, NULL, NULL, NULL, &rs2u_,
-                           exhaust1, exhaust2, -1, -1);
-            }
-			size_t off;
-			if(sortByScore) {
-				// Sort by score then pick from low to high
-				off = selectByScore(&rs2u_, NULL, nunpair2, select2_, rnd);
-			} else {
-				// Select subset randomly
-				off = selectAlnsToReport(rs2u_, nunpair2, select2_, rnd);
-			}
+            //if(rep1) {
+            //    summ2.init(
+            //               rd1_, rd2_, NULL, NULL, &rs1u_, &rs2u_,
+            //               exhaust1, exhaust2, -1, -1);
+            //} else {
+            //    summ2.init(
+            //               NULL, rd2_, NULL, NULL, NULL, &rs2u_,
+            //               exhaust1, exhaust2, -1, -1);
+            //}
+			summ2.init(
+					   NULL, rd2_, NULL, NULL, NULL, &rs2u_,
+					   exhaust1, exhaust2, -1, -1);
+			// Sort by score then pick from low to high
+			AlnScore bestUScore, bestP1Score, bestP2Score, bestCScore;
+			AlnScore bestUDist, bestP1Dist, bestP2Dist, bestCDist;
+			AlnScore bestUnchosenUScore, bestUnchosenP1Score, bestUnchosenP2Score, bestUnchosenCScore;
+			AlnScore bestUnchosenUDist, bestUnchosenP1Dist, bestUnchosenP2Dist, bestUnchosenCDist;
+			size_t off = selectByScore(
+				&rs2u_, NULL, nunpair2, select2_, NULL, NULL,
+				bestUScore,
+				bestUDist,
+				bestP1Score,
+				bestP1Dist,
+				bestP2Score,
+				bestP2Dist,
+				bestCScore,
+				bestCDist,
+				bestUnchosenUScore,
+				bestUnchosenUDist,
+				bestUnchosenP1Score,
+				bestUnchosenP1Dist,
+				bestUnchosenP2Score,
+				bestUnchosenP2Dist,
+				bestUnchosenCScore,
+				bestUnchosenCDist,
+				rnd);
+			summ2.setBest(
+				bestUScore,
+				bestUDist,
+				bestP1Score,
+				bestP1Dist,
+				bestP2Score,
+				bestP2Dist,
+				bestCScore,
+				bestCDist,
+				bestUnchosenUScore,
+				bestUnchosenUDist,
+				bestUnchosenP1Score,
+				bestUnchosenP1Dist,
+				bestUnchosenP2Score,
+				bestUnchosenP2Dist,
+				bestUnchosenCScore,
+				bestUnchosenCDist);
+			assert(sortByScore);
+			//if(sortByScore) {
+			//	// Sort by score then pick from low to high
+			//	off = selectByScore(&rs2u_, NULL, nunpair2, select2_, rnd);
+			//} else {
+			//	// Select subset randomly
+			//	off = selectAlnsToReport(rs2u_, nunpair2, select2_, rnd);
+			//}
 			repRs2 = &rs2u_[off];
             summ1.numAlns2(select2_.size());
             summ2.numAlns2(select2_.size());
@@ -2108,84 +2387,7 @@ void AlnSinkWrap<index_t>::finishRead(
 			// summary
 			assert(!unpair2Max);
 		}
-        
-        // Update counters given that one mate didn't align
-        if(readIsPair()) {
-            met.nconcord_0++;
-        }
-        if(rd1_ != NULL) {
-            if(nunpair1 > 0) {
-                // Update counters
-                if(readIsPair()) {
-                    if(unpair1Max) met.nunp_0_rep++;
-                    else {
-                        met.nunp_0_uni++;
-                        assert(!rs1u_.empty());
-                        if(select1_.size() == 1) {
-                            met.nunp_0_uni1++;
-                        } else {
-                            met.nunp_0_uni2++;
-                        }
-                    }
-                } else {
-                    if(unpair1Max) met.nunp_rep++;
-                    else {
-                        met.nunp_uni++;
-                        assert(!rs1u_.empty());
-                        if(select1_.size() == 1) {
-                            met.nunp_uni1++;
-                        } else {
-                            met.nunp_uni2++;
-                        }
-                    }
-                }
-            } else if(unpair1Max) {
-                // Update counters
-                if(readIsPair())   met.nunp_0_rep++;
-                else               met.nunp_rep++;
-            } else {
-                // Update counters
-                if(readIsPair())   met.nunp_0_0++;
-                else               met.nunp_0++;
-            }
-        }
-        if(rd2_ != NULL) {
-            if(nunpair2 > 0) {
-                // Update counters
-                if(readIsPair()) {
-                    if(unpair2Max) met.nunp_0_rep++;
-                    else {
-                        assert(!rs2u_.empty());
-                        met.nunp_0_uni++;
-                        if(select2_.size() == 1) {
-                            met.nunp_0_uni1++;
-                        } else {
-                            met.nunp_0_uni2++;
-                        }
-                    }
-                } else {
-                    if(unpair2Max) met.nunp_rep++;
-                    else {
-                        assert(!rs2u_.empty());
-                        met.nunp_uni++;
-                        if(select2_.size() == 1) {
-                            met.nunp_uni1++;
-                        } else {
-                            met.nunp_uni2++;
-                        }
-                    }
-                }
-            } else if(unpair2Max) {
-                // Update counters
-                if(readIsPair())   met.nunp_0_rep++;
-                else               met.nunp_rep++;
-            } else {
-                // Update counters
-                if(readIsPair())   met.nunp_0_0++;
-                else               met.nunp_0++;
-            }
-        }
-		
+
 		// Now set up flags
 		if(rep1) {
 			// Initialize flags.  Note: We want to have information about how
@@ -2257,7 +2459,8 @@ void AlnSinkWrap<index_t>::finishRead(
 						  repRs2 != NULL ? &flags2 : NULL,
 						  prm,
 						  mapq_,
-						  sc);
+						  sc,
+						  false);
 			assert_lt(select1_[0], rs1u_.size());
 			refid = rs1u_[select1_[0]].refid();
 			refoff = rs1u_[select1_[0]].refoff();
@@ -2288,7 +2491,8 @@ void AlnSinkWrap<index_t>::finishRead(
 						  repRs1 != NULL ? &flags1 : NULL,
 						  prm,
 						  mapq_,
-						  sc);
+						  sc,
+						  false);
 			assert_lt(select2_[0], rs2u_.size());
 			refid = rs2u_[select2_[0]].refid();
 			refoff = rs2u_[select2_[0]].refoff();
@@ -2497,36 +2701,82 @@ bool AlnSinkWrap<index_t>::prepareDiscordants() {
  */
 template <typename index_t>
 size_t AlnSinkWrap<index_t>::selectByScore(
-										   const EList<AlnRes>* rs1,    // alignments to select from (mate 1)
-										   const EList<AlnRes>* rs2,    // alignments to select from (mate 2, or NULL)
-										   uint64_t             num,    // number of alignments to select
-										   EList<size_t>&       select, // prioritized list to put results in
-										   RandomSource&        rnd)
-const
+	const EList<AlnRes>* rs1,    // alignments to select from (mate 1)
+	const EList<AlnRes>* rs2,    // alignments to select from (mate 2, or NULL)
+	uint64_t             num,    // number of alignments to select
+	EList<size_t>&       select, // prioritized list to put results in
+	const EList<AlnRes>* rs1u,   // alignments to select from (mate 1)
+	const EList<AlnRes>* rs2u,   // alignments to select from (mate 2, or NULL)
+	AlnScore&            bestUScore,
+	AlnScore&            bestUDist,
+	AlnScore&            bestP1Score,
+	AlnScore&            bestP1Dist,
+	AlnScore&            bestP2Score,
+	AlnScore&            bestP2Dist,
+	AlnScore&            bestCScore,
+	AlnScore&            bestCDist,
+	AlnScore&            bestUnchosenUScore,
+	AlnScore&            bestUnchosenUDist,
+	AlnScore&            bestUnchosenP1Score,
+	AlnScore&            bestUnchosenP1Dist,
+	AlnScore&            bestUnchosenP2Score,
+	AlnScore&            bestUnchosenP2Dist,
+	AlnScore&            bestUnchosenCScore,
+	AlnScore&            bestUnchosenCDist,
+	RandomSource&        rnd)
+	const
 {
 	assert(init_);
 	assert(repOk());
 	assert_gt(num, 0);
 	assert(rs1 != NULL);
+	assert(rs2 == NULL || rs1u != NULL);
+	assert(rs2 == NULL || rs2u != NULL);
+	
+	bestUScore.invalidate();
+	bestUDist.invalidate();
+	bestUnchosenUScore.invalidate();
+	bestUnchosenUDist.invalidate();
+	
+	bestCScore.invalidate();
+	bestP1Score.invalidate();
+	bestP2Score.invalidate();
+	bestCDist.invalidate();
+	bestP1Dist.invalidate();
+	bestP2Dist.invalidate();
+	bestUnchosenCScore.invalidate();
+	bestUnchosenP1Score.invalidate();
+	bestUnchosenP2Score.invalidate();
+	bestUnchosenCDist.invalidate();
+	bestUnchosenP1Dist.invalidate();
+	bestUnchosenP2Dist.invalidate();
+	
 	size_t sz = rs1->size(); // sz = # alignments found
 	assert_leq(num, sz);
 	if(sz < num) {
 		num = sz;
 	}
 	// num = # to select
-	if(sz < 1) {
+	if(sz == 0) {
 		return 0;
 	}
 	select.resize((size_t)num);
 	// Use 'selectBuf_' as a temporary list for sorting purposes
-	EList<std::pair<TAlScore, size_t> >& buf =
-	const_cast<EList<std::pair<TAlScore, size_t> >& >(selectBuf_);
+	EList<std::pair<AlnScore, size_t> >& buf =
+	const_cast<EList<std::pair<AlnScore, size_t> >& >(selectBuf_);
 	buf.resize(sz);
 	// Sort by score.  If reads are pairs, sort by sum of mate scores.
 	for(size_t i = 0; i < sz; i++) {
-		buf[i].first = (*rs1)[i].score().hisat2_score();
+		TAlScore tmp_sc_1 = (*rs1)[i].score().hisat2_score();
+		AlnScore tmp_alnsc_1 = (*rs1)[i].score();
+		tmp_alnsc_1.score_ = tmp_sc_1;
 		if(rs2 != NULL) {
-			buf[i].first += (*rs2)[i].score().hisat2_score();
+			TAlScore tmp_sc_2 = (*rs2)[i].score().hisat2_score();
+			AlnScore tmp_alnsc_2 = (*rs2)[i].score();
+			tmp_alnsc_2.score_ =tmp_sc_2;
+			buf[i].first = tmp_alnsc_1 + tmp_alnsc_2;
+		} else {
+			buf[i].first = tmp_alnsc_1;
 		}
 		buf[i].second = i; // original offset
 	}
@@ -2562,6 +2812,58 @@ const
         }
     }
     
+
+	if(rs2 == NULL) {
+		bestUScore = bestUDist = (*rs1)[select[0]].score();
+	}
+	
+	// For paired-end read, find best alignment score among end
+	// alignments not chosen, for both ends
+	if(rs2 != NULL) {
+		bestCScore = bestCDist = (*rs1)[select[0]].score() + (*rs2)[select[0]].score();
+		bestP1Score = bestP1Dist = (*rs1)[select[0]].score();
+		bestP2Score = bestP2Dist = (*rs2)[select[0]].score();
+		for(size_t i = 0; i < rs1u->size(); i++) {
+			if((*rs1u)[i].refcoord() == (*rs1)[select[0]].refcoord()) {
+				continue;
+			}
+			if((*rs1u)[i].score() > bestUnchosenP1Score) {
+				bestUnchosenP1Score = (*rs1u)[i].score();
+			}
+			if((*rs1u)[i].score().basesAligned() > bestUnchosenP1Dist.basesAligned()) {
+				bestUnchosenP1Dist = (*rs1u)[i].score();
+			}
+		}
+		for(size_t i = 0; i < rs2u->size(); i++) {
+			if((*rs2u)[i].refcoord() == (*rs2)[select[0]].refcoord()) {
+				continue;
+			}
+			if((*rs2u)[i].score() > bestUnchosenP2Score) {
+				bestUnchosenP2Score = (*rs2u)[i].score();
+			}
+			if((*rs2u)[i].score().basesAligned() > bestUnchosenP2Dist.basesAligned()) {
+				bestUnchosenP2Dist = (*rs2u)[i].score();
+			}
+		}
+		if(buf.size() > 1) {
+			bestUnchosenCScore = buf[1].first;
+			for(size_t i = 1; i < buf.size(); i++) {
+				AlnScore dist = (*rs1)[buf[i].second].score() +
+				(*rs2)[buf[i].second].score();
+				if(dist.basesAligned() > bestUnchosenCDist.basesAligned()) {
+					bestUnchosenCDist = dist;
+				}
+			}
+		}
+	} else if(buf.size() > 1) {
+		bestUnchosenUScore = (*rs1)[buf[1].second].score();
+		for(size_t i = 1; i < buf.size(); i++) {
+			if((*rs1)[buf[1].second].score().basesAligned() > bestUnchosenUDist.basesAligned()) {
+				bestUnchosenUDist = (*rs1)[buf[1].second].score();
+			}
+		}
+	}
+	
 	// Returns index of the representative alignment, but in 'select' also
 	// returns the indexes of the next best selected alignments in order by
 	// score.

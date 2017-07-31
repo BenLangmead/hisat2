@@ -1231,12 +1231,6 @@ void AlnSetSumm::init(
 	}
 	if(szs[0] > 0 || szs[1] > 0) {
 		init(
-             best[0],
-             secbest[0],
-             best[1],
-             secbest[1],
-             bestPaired,
-             secbestPaired,
              (szs[0] == 0) ? 0 : (szs[0] - 1),
              (szs[1] == 0) ? 0 : (szs[1] - 1),
              paired,

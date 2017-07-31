@@ -5288,6 +5288,8 @@ bool HI_Aligner<index_t, local_index_t>::reportHit(
     }
     AlnScore oasc(
                   ohit->score(),  // numeric score
+                  (int)(ordlen - oedits.size()),
+                  (int)oedits.size(),
                   ohit->ns(),     // # Ns
                   ohit->ngaps()); // # gaps
     bool osoftTrim = ohit->trim5() > 0 || ohit->trim3() > 0;

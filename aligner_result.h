@@ -66,6 +66,8 @@ public:
 	 */
 	inline AlnScore(
                     TAlScore score,
+                    int basesAligned,
+                    int edits,
                     TAlScore ns,
                     TAlScore gaps,
                     TAlScore splicescore = 0,
@@ -74,6 +76,8 @@ public:
                     int leftTrim = 0,
                     int rightTrim = 0) {
 		score_ = score;
+		basesAligned_ = basesAligned;
+		edits_ = edits;
 		ns_ = ns;
 		gaps_ = gaps;
         splicescore_ = splicescore;
@@ -89,7 +93,7 @@ public:
 	 * Reset the score.
 	 */
 	void reset() {
-		score_ = hisat2_score_ = ns_ = gaps_ = 0;
+		score_ = basesAligned_ = edits_ = hisat2_score_ = ns_ = gaps_ = 0;
         splicescore_ = 0;
         knownTranscripts_ = false;
         nearSpliceSites_ = false;
@@ -119,6 +123,8 @@ public:
 	 */
 	inline void invalidate() {
 		score_ = MIN_I64;
+		edits_ = basesAligned_ = std::numeric_limits<int>::min();
+		ns_ = gaps_ = 0;
 		assert(!valid());
 	}
 	
@@ -150,6 +156,7 @@ public:
 			// I'm invalid, other is valid
 			return false;
 		}
+		// hisat2_score acts as tie breaker
 		return score_ > o.score_ || (score_ == o.score_ && hisat2_score_ > o.hisat2_score_);
 	}
 
@@ -159,7 +166,9 @@ public:
 	inline AlnScore& operator=(const AlnScore& o) {
 		// Profiling shows many cache misses on following lines
 		gaps_  = o.gaps_;
+		basesAligned_ = o.basesAligned_;
 		ns_    = o.ns_;
+		edits_ = o.edits_;
 		score_ = o.score_;
         hisat2_score_ = o.hisat2_score_;
         splicescore_ = o.splicescore_;
@@ -213,34 +222,15 @@ public:
 	}
 
 	/**
-	 * Return true iff this score is <= score o.
-	 */
-	inline bool operator<=(const AlnScore& o) const {
-		return !operator>(o);
-	}
-
-	/**
-	 * Calculate difference between two SwScores.
-	 */
-	inline AlnScore operator-(const AlnScore& o) const {
-		if(!VALID_AL_SCORE(*this)) return *this;
-		AlnScore s; 
-		s.gaps_ = gaps_ - o.gaps_;
-		s.ns_ = ns_;
-		s.score_ = score_ - o.score_;
-        s.splicescore_ = splicescore_ - o.splicescore_;
-		assert_lt(s.ns_, 0x7fffffff);
-		return s;
-	}
-
-	/**
 	 * Calculate sum of two SwScores.
 	 */
 	inline AlnScore operator+(const AlnScore& o) const {
 		if(!VALID_AL_SCORE(*this)) return *this;
 		AlnScore s;
 		s.gaps_ = gaps_ + o.gaps_;
+		s.basesAligned_ = basesAligned_ + o.basesAligned_;
 		s.ns_ = ns_;
+		s.edits_ = edits_ + o.edits_;
 		s.score_ = score_ + o.score_;
         s.splicescore_ = splicescore_ + o.splicescore_;
         s.hisat2_score_ = hisat2_score_ + o.hisat2_score_;
@@ -258,7 +248,10 @@ public:
 	inline AlnScore operator+=(const AlnScore& o) {
 		if(VALID_AL_SCORE(*this)) {
 			gaps_ += o.gaps_;
+			basesAligned_ += o.basesAligned_;
 			score_ += o.score_;
+			edits_ += o.edits_;
+			ns_ += o.ns_;
             splicescore_ += o.splicescore_;
             hisat2_score_ += o.hisat2_score_;
             knownTranscripts_ |= o.knownTranscripts_;
@@ -269,44 +262,13 @@ public:
 		return (*this);
 	}
 
-	/**
-	 * Subtract given SwScore from this one.
-	 */
-	inline AlnScore operator-=(const AlnScore& o) {
-		if(VALID_AL_SCORE(*this)) {
-			gaps_ -= o.gaps_;
-			score_ -= o.score_;
-            // splicescore_ -= o.splicescore_;
-		}
-		return (*this);
-	}
-
-	/**
-	 * Calculate difference between two SwScores.
-	 */
-	inline AlnScore operator-(int o) const {
-		return (*this) + -o;
-	}
-
-	/**
-	 * Calculate sum of a SwScore and an integer.
-	 */
-	inline AlnScore operator+(int o) const {
-		if(!VALID_AL_SCORE(*this)) return *this;
-		AlnScore s;
-		s.gaps_ = gaps_;
-		s.ns_ = ns_;
-		s.score_ = score_ + o;
-        // s.splicescore_ = splicescore_;
-		assert_lt(s.ns_, 0x7fffffff);
-		return s;
-	}
-
 	TAlScore score()            const { return  score_; }
     TAlScore hisat2_score()     const { return  hisat2_score_; }
 	TAlScore penalty()          const { return -score_; }
 	TAlScore gaps()             const { return  gaps_;  }
 	TAlScore ns()               const { return  ns_;    }
+	int basesAligned()          const { return  basesAligned_; }
+	int nedit()                 const { return  edits_; }
     TAlScore splicescore()      const { return splicescore_; }
     bool     knownTranscripts() const { return knownTranscripts_; }
     bool     nearSpliceSites()  const { return nearSpliceSites_; }
@@ -338,7 +300,13 @@ public:
 
 	// Score accumulated so far (penalties are subtracted starting at 0)
 	TAlScore score_;
-    
+
+	// Number of bases matching between the read and reference
+	int basesAligned_;
+	
+	// Edit distance
+	int edits_;
+
     // HISAT2 score, which is used internally to distinguish the alignments of RNA-seq reads
     TAlScore hisat2_score_;
 	
@@ -463,6 +431,7 @@ public:
 		mixedMode_  = mixedMode;
 		primary_    = primary;
 		oppAligned_ = oppAligned;
+		oppFw_      = oppFw;
 	}
 
 	/**
@@ -611,6 +580,10 @@ public:
 		return oppAligned_;
 	}
 
+	inline bool isOppFw() const {
+		return oppFw_;
+	}
+
 protected:
 
 	// See ALN_FLAG_PAIR_* above
@@ -642,6 +615,9 @@ protected:
 
 	// True iff the opposite mate aligned
 	bool oppAligned_;
+
+	// True if opposite mate aligned in the forward direction
+	bool oppFw_;
 };
 
 static inline ostream& operator<<(ostream& os, const AlnScore& o) {
@@ -2040,12 +2016,6 @@ public:
 	}
 
 	explicit AlnSetSumm(
-		AlnScore best1,
-		AlnScore secbest1,
-		AlnScore best2,
-		AlnScore secbest2,
-		AlnScore bestPaired,
-		AlnScore secbestPaired,
 		TNumAlns other1,
 		TNumAlns other2,
 		bool     paired,
@@ -2058,12 +2028,6 @@ public:
         TNumAlns numAlnsPaired)
 	{
 		init(
-             best1,
-             secbest1,
-             best2,
-             secbest2,
-             bestPaired,
-             secbestPaired,
              other1,
              other2,
              paired,
@@ -2080,12 +2044,22 @@ public:
 	 * Set to uninitialized state.
 	 */
 	void reset() {
-		best1_.invalidate();
-		secbest1_.invalidate();
-		best2_.invalidate();
-		secbest2_.invalidate();
-		bestPaired_.invalidate();
-		secbestPaired_.invalidate();
+		bestUScore_.invalidate();
+		bestP1Score_.invalidate();
+		bestP2Score_.invalidate();
+		bestCScore_.invalidate();
+		bestUDist_.invalidate();
+		bestP1Dist_.invalidate();
+		bestP2Dist_.invalidate();
+		bestCDist_.invalidate();
+		bestUnchosenUScore_.invalidate();
+		bestUnchosenP1Score_.invalidate();
+		bestUnchosenP2Score_.invalidate();
+		bestUnchosenCScore_.invalidate();
+		bestUnchosenUDist_.invalidate();
+		bestUnchosenP1Dist_.invalidate();
+		bestUnchosenP2Dist_.invalidate();
+		bestUnchosenCDist_.invalidate();
 		other1_ = other2_ = 0;
 		paired_ = false;
 		exhausted1_ = exhausted2_ = false;
@@ -2110,12 +2084,6 @@ public:
 	 * Initialize given fields.  See constructor for how fields are set.
 	 */
 	void init(
-		AlnScore best1,
-		AlnScore secbest1,
-		AlnScore best2,
-		AlnScore secbest2,
-		AlnScore bestPaired,
-		AlnScore secbestPaired,
 		TNumAlns other1,
 		TNumAlns other2,
 		bool     paired,
@@ -2127,12 +2095,6 @@ public:
         TNumAlns numAlns2,
         TNumAlns numAlnsPaired)
 	{
-		best1_         = best1;
-		secbest1_      = secbest1;
-		best2_         = best2;
-		secbest2_      = secbest2;
-		bestPaired_    = bestPaired;
-		secbestPaired_ = secbestPaired;
 		other1_        = other1;
 		other2_        = other2;
 		paired_        = paired;
@@ -2151,7 +2113,7 @@ public:
 	 */
 	bool empty() const {
 		assert(repOk());
-		return !VALID_AL_SCORE(best1_);
+		return !VALID_AL_SCORE(bestScore(true));
 	}
 	
 #ifndef NDEBUG
@@ -2159,20 +2121,10 @@ public:
 	 * Check that the summary is internally consistent.
 	 */
 	bool repOk() const {
-		assert(other1_ == 0 ||  VALID_AL_SCORE(secbest1_));
-		assert(other1_ != 0 || !VALID_AL_SCORE(secbest1_));
-		assert(other2_ == 0 ||  VALID_AL_SCORE(secbest2_));
-		assert(other2_ != 0 || !VALID_AL_SCORE(secbest2_));
 		return true;
 	}
 #endif
 	
-	AlnScore best1()         const { return best1_;         }
-	AlnScore secbest1()      const { return secbest1_;      }
-	AlnScore best2()         const { return best2_;         }
-	AlnScore secbest2()      const { return secbest2_;      }
-	AlnScore bestPaired()    const { return bestPaired_;    }
-	AlnScore secbestPaired() const { return secbestPaired_; }
 	TNumAlns other1()        const { return other1_;        }
 	TNumAlns other2()        const { return other2_;        }
 	bool     paired()        const { return paired_;        }
@@ -2180,7 +2132,25 @@ public:
 	bool     exhausted2()    const { return exhausted2_;    }
 	TRefId   orefid()        const { return orefid_;        }
 	TRefOff  orefoff()       const { return orefoff_;       }
-    
+
+	AlnScore bestUScore()  const { return bestUScore_;  }
+	AlnScore bestP1Score() const { return bestP1Score_; }
+	AlnScore bestP2Score() const { return bestP2Score_; }
+	AlnScore bestCScore()  const { return bestCScore_;  }
+	AlnScore bestUDist()   const { return bestUDist_;  }
+	AlnScore bestP1Dist()  const { return bestP1Dist_; }
+	AlnScore bestP2Dist()  const { return bestP2Dist_; }
+	AlnScore bestCDist()   const { return bestCDist_;  }
+	
+	AlnScore bestUnchosenUScore()  const { return bestUnchosenUScore_;  }
+	AlnScore bestUnchosenP1Score() const { return bestUnchosenP1Score_; }
+	AlnScore bestUnchosenP2Score() const { return bestUnchosenP2Score_; }
+	AlnScore bestUnchosenCScore()  const { return bestUnchosenCScore_;  }
+	AlnScore bestUnchosenUDist()   const { return bestUnchosenUDist_;  }
+	AlnScore bestUnchosenP1Dist()  const { return bestUnchosenP1Dist_; }
+	AlnScore bestUnchosenP2Dist()  const { return bestUnchosenP2Dist_; }
+	AlnScore bestUnchosenCDist()   const { return bestUnchosenCDist_;  }
+
     TNumAlns numAlns1()      const { return numAlns1_;      }
     TNumAlns numAlns2()      const { return numAlns2_;      }
     TNumAlns numAlnsPaired() const { return numAlnsPaired_; }
@@ -2190,57 +2160,110 @@ public:
     void numAlnsPaired(TNumAlns numAlnsPaired) { numAlnsPaired_ = numAlnsPaired; }
 
 	/**
-	 *
+	 * Return best unchosen alignment score for end 1 or 2 of a pair.
 	 */
-	AlnScore best(bool mate1) const { return mate1 ? best1_ : best2_; }
+	AlnScore bestUnchosenPScore(bool mate1) const {
+		return mate1 ? bestUnchosenP1Score_ : bestUnchosenP2Score_;
+	}
+	
+	/**
+	 * Return best unchosen edit distance for end 1 or 2 of a pair.
+	 */
+	AlnScore bestUnchosenPDist(bool mate1) const {
+		return mate1 ? bestUnchosenP1Dist_ : bestUnchosenP2Dist_;
+	}
+	
+	/**
+	 * Return best unchosen alignment score for end 1 or 2 whether
+	 * the read is a pair or not.
+	 */
+	AlnScore bestUnchosenScore(bool mate1) const {
+		return paired_ ? (mate1 ? bestUnchosenP1Score_ : bestUnchosenP2Score_) : bestUnchosenUScore();
+	}
+	
+	/**
+	 * Return best unchosen edit distance for end 1 or 2 whether
+	 * the read is a pair or not.
+	 */
+	AlnScore bestUnchosenDist(bool mate1) const {
+		return paired_ ? (mate1 ? bestUnchosenP1Dist_ : bestUnchosenP2Dist_) : bestUnchosenUDist();
+	}
 
 	bool exhausted(bool mate1) const {
 		return mate1 ? exhausted1_ : exhausted2_;
 	}
 
 	/**
-	 * Return the second-best score for the specified mate.  If the alignment
-	 * is paired and the specified mate aligns uniquely, return an invalid
-	 * second-best score.  This allows us to treat mates separately, so that
-	 * repetitive paired-end alignments don't trump potentially unique unpaired
-	 * alignments.
+	 * Return best alignment score for end 1 or 2 whether the read is
+	 * a pair or not.
 	 */
-	AlnScore secbestMate(bool mate1) const {
-		return mate1 ? secbest1_ : secbest2_;
+	AlnScore bestScore(bool mate1) const {
+		return paired_ ? (mate1 ? bestP1Score_ : bestP2Score_) : bestUScore_;
 	}
 	
 	/**
-	 * Return the second-best score for the specified mate.  If the alignment
-	 * is paired and the specified mate aligns uniquely, return an invalid
-	 * second-best score.  This allows us to treat mates separately, so that
-	 * repetitive paired-end alignments don't trump potentially unique unpaired
-	 * alignments.
+	 * Return best edit distance for end 1 or 2 whether the read is
+	 * a pair or not.
 	 */
-	AlnScore secbest(bool mate1) const {
-		if(paired_) {
-			if(mate1) {
-				//if(!secbest1_.valid()) {
-					return secbest1_;
-				//}
-			} else {
-				//if(!secbest2_.valid()) {
-					return secbest2_;
-				//}
-			}
-			//return secbestPaired_;
-		} else {
-			return mate1 ? secbest1_ : secbest2_;
-		}
+	AlnScore bestDist(bool mate1) const {
+		return paired_ ? (mate1 ? bestP1Dist_ : bestP2Dist_) : bestUDist_;
 	}
 	
+	/**
+	 * Add information about unchosen alignments to the summary.  This is
+	 * in its own "setter" function because it's not known until we've
+	 * picked which alignment to report, which is after we've initially
+	 * constructed the summary.
+	 *
+	 * Info about unchosen alignments is used for predicting mapping
+	 * quality.
+	 */
+	void setBest(
+				 AlnScore bestUScore,
+				 AlnScore bestUDist,
+				 AlnScore bestP1Score,
+				 AlnScore bestP1Dist,
+				 AlnScore bestP2Score,
+				 AlnScore bestP2Dist,
+				 AlnScore bestCScore,
+				 AlnScore bestCDist,
+				 AlnScore bestUnchosenUScore,
+				 AlnScore bestUnchosenUDist,
+				 AlnScore bestUnchosenP1Score,
+				 AlnScore bestUnchosenP1Dist,
+				 AlnScore bestUnchosenP2Score,
+				 AlnScore bestUnchosenP2Dist,
+				 AlnScore bestUnchosenCScore,
+				 AlnScore bestUnchosenCDist)
+	{
+		assert(bestUScore.valid() == bestUDist.valid());
+		assert(bestP1Score.valid() == bestP1Dist.valid());
+		assert(bestP2Score.valid() == bestP2Dist.valid());
+		assert(bestCScore.valid() == bestCDist.valid());
+		assert(bestUnchosenUScore.valid() == bestUnchosenUDist.valid());
+		assert(bestUnchosenP1Score.valid() == bestUnchosenP1Dist.valid());
+		assert(bestUnchosenP2Score.valid() == bestUnchosenP2Dist.valid());
+		assert(bestUnchosenCScore.valid() == bestUnchosenCDist.valid());
+		bestUScore_ = bestUScore;
+		bestUDist_ = bestUDist;
+		bestP1Score_ = bestP1Score;
+		bestP1Dist_ = bestP1Dist;
+		bestP2Score_ = bestP2Score;
+		bestP2Dist_ = bestP2Dist;
+		bestCScore_ = bestCScore;
+		bestCDist_ = bestCDist;
+		bestUnchosenUScore_ = bestUnchosenUScore;
+		bestUnchosenUDist_ = bestUnchosenUDist;
+		bestUnchosenP1Score_ = bestUnchosenP1Score;
+		bestUnchosenP1Dist_ = bestUnchosenP1Dist;
+		bestUnchosenP2Score_ = bestUnchosenP2Score;
+		bestUnchosenP2Dist_ = bestUnchosenP2Dist;
+		bestUnchosenCScore_ = bestUnchosenCScore;
+		bestUnchosenCDist_ = bestUnchosenCDist;
+	}
+
 protected:
 	
-	AlnScore bestPaired_;    // best full-alignment score found for this read
-	AlnScore secbestPaired_; // second-best
-	AlnScore best1_;         // best full-alignment score found for this read
-	AlnScore secbest1_;      // second-best
-	AlnScore best2_;         // best full-alignment score found for this read
-	AlnScore secbest2_;      // second-best
 	TNumAlns other1_;        // # more alignments within N points of second-best
 	TNumAlns other2_;        // # more alignments within N points of second-best
 	bool     paired_;        // results are paired
@@ -2248,7 +2271,25 @@ protected:
 	bool     exhausted2_;    // searched exhaustively for mate 2 alignments?
 	TRefId   orefid_;
 	TRefOff  orefoff_;
-    
+
+	AlnScore bestUScore_;
+	AlnScore bestUDist_;
+	AlnScore bestP1Score_;
+	AlnScore bestP1Dist_;
+	AlnScore bestP2Score_;
+	AlnScore bestP2Dist_;
+	AlnScore bestCScore_;
+	AlnScore bestCDist_;
+	
+	AlnScore bestUnchosenUScore_;
+	AlnScore bestUnchosenUDist_;
+	AlnScore bestUnchosenP1Score_;
+	AlnScore bestUnchosenP1Dist_;
+	AlnScore bestUnchosenP2Score_;
+	AlnScore bestUnchosenP2Dist_;
+	AlnScore bestUnchosenCScore_;
+	AlnScore bestUnchosenCDist_;
+
     TNumAlns numAlns1_;      // number of alignments for mate 1 as singleton or discordantly mapped
     TNumAlns numAlns2_;      // number of alignments for mate 2 as singleton or discordantly mapped
     TNumAlns numAlnsPaired_; // number of concordant pair alignments

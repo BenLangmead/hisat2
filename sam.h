@@ -95,6 +95,7 @@ public:
               bool print_ys,
               bool print_zs,
               bool print_xr,
+              bool print_zt,
               bool print_xt,
               bool print_xd,
               bool print_xu,
@@ -145,6 +146,7 @@ public:
 		print_ys_(print_ys),
 		print_zs_(print_zs),
 		print_xr_(print_xr),
+		print_zt_(print_zt),
 		print_xt_(print_xt), // time elapsed in microseconds
 		print_xd_(print_xd), // DP extend attempts
 		print_xu_(print_xu), // ungapped extend attempts
@@ -381,6 +383,7 @@ protected:
 	bool print_zs_; // ZS:i: Pseudo-random seed
 	
 	bool print_xr_; // XR:Z: Original read string
+	bool print_zt_; // ZT:Z: MAPQ features
 	bool print_xt_; // XT:i: Time taken to align
 	bool print_xd_; // XD:i: DP problems
 	bool print_xu_; // XU:i: ungapped alignment
@@ -528,15 +531,19 @@ const
     
     // Do not output suboptimal alignment score, which conflicts with Cufflinks and StringTie
     if(print_xs_) {
-        // XS:i: Suboptimal alignment score
-        // Use ZS:i: to avoid conflict with XS:A:
-        AlnScore sco = summ.secbestMate(rd.mate < 2);
-        if(sco.valid()) {
-            itoa10<TAlScore>(sco.score(), buf);
-            WRITE_SEP();
-            o.append("ZS:i:");
-            o.append(buf);
-        }
+		// XS:i: Suboptimal alignment score
+		AlnScore sco;
+		if(flags.partOfPair()) {
+			sco = summ.bestUnchosenPScore(rd.mate < 2);
+		} else {
+			sco = summ.bestUnchosenUScore();
+		}
+		if(sco.valid()) {
+			itoa10<TAlScore>(sco.score(), buf);
+			WRITE_SEP();
+			o.append("XS:i:");
+			o.append(buf);
+		}
     }
     if(print_xn_) {
         // XN:i: Number of ambiguous bases in the referenece
@@ -716,46 +723,42 @@ const
         }
     }
     if(flags.partOfPair() && print_zp_) {
-        // ZP:i: Score of best concordant paired-end alignment
-        WRITE_SEP();
-        o.append("ZP:Z:");
-        if(summ.bestPaired().valid()) {
-            itoa10<TAlScore>(summ.bestPaired().score(), buf);
-            o.append(buf);
-        } else {
-            o.append("NA");
-        }
-        // Zp:i: Second-best concordant paired-end alignment score
-        WRITE_SEP();
-        o.append("Zp:Z:");
-        if(summ.secbestPaired().valid()) {
-            itoa10<TAlScore>(summ.secbestPaired().score(), buf);
-            o.append(buf);
-        } else {
-            o.append("NA");
-        }
+		// ZP:i: Score of best concordant paired-end alignment
+		if(summ.bestCScore().valid()) {
+			WRITE_SEP();
+			o.append("ZP:i:");
+			itoa10<TAlScore>(summ.bestCScore().score(), buf);
+			o.append(buf);
+		}
+		// Zp:i: Score of second-best concordant paired-end alignment
+		if(summ.bestUnchosenCScore().valid()) {
+			WRITE_SEP();
+			o.append("Zp:i:");
+			itoa10<TAlScore>(summ.bestUnchosenCScore().score(), buf);
+			o.append(buf);
+		}
     }
     if(print_zu_) {
-        // ZU:i: Score of best unpaired alignment
-        AlnScore best    = (rd.mate <= 1 ? summ.best1()    : summ.best2());
-        AlnScore secbest = (rd.mate <= 1 ? summ.secbest1() : summ.secbest2());
-        WRITE_SEP();
-        o.append("ZU:i:");
-        if(best.valid()) {
-            itoa10<TAlScore>(best.score(), buf);
-            o.append(buf);
-        } else {
-            o.append("NA");
-        }
-        // Zu:i: Score of second-best unpaired alignment
-        WRITE_SEP();
-        o.append("Zu:i:");
-        if(secbest.valid()) {
-            itoa10<TAlScore>(secbest.score(), buf);
-            o.append(buf);
-        } else {
-            o.append("NA");
-        }
+		// ZU:i: Score of best unpaired alignment
+		AlnScore best    = summ.bestScore(rd.mate <= 1);
+		AlnScore secbest = summ.bestUnchosenPScore(rd.mate <= 1);
+		WRITE_SEP();
+		o.append("ZU:i:");
+		if(best.valid()) {
+			itoa10<TAlScore>(best.score(), buf);
+			o.append(buf);
+		} else {
+			o.append("NA");
+		}
+		// Zu:i: Score of second-best unpaired alignment
+		WRITE_SEP();
+		o.append("Zu:i:");
+		if(secbest.valid()) {
+			itoa10<TAlScore>(secbest.score(), buf);
+			o.append(buf);
+		} else {
+			o.append("NA");
+		}
     }
     if(!rgs_.empty()) {
         WRITE_SEP();
@@ -1021,6 +1024,123 @@ const
         o.append("\n");
         printOptFieldNewlineEscapedZ(o, rd.readOrigBuf);
     }
+
+	if(print_zt_) {
+		// ZT:Z: Extra features for MAPQ estimation
+		WRITE_SEP();
+		const bool paired = flags.partOfPair();
+		const TAlScore MN = std::numeric_limits<TAlScore>::min();
+		TAlScore secondBest[2] = {MN, MN};
+		TAlScore thirdBest[2] = {MN, MN};
+		const int ED_MAX = std::numeric_limits<int>::max();
+		AlnScore best[2] = {res.score(), res.oscore()};
+		TAlScore diffEd[2] = {ED_MAX, ED_MAX};
+		for (int self = 0; self < (paired ? 2 : 1); self++) {
+			// Second-best
+			AlnScore sco;
+			bool mate1 = rd.mate < 2; // first iteration: self
+			if(self > 0) mate1 = !mate1; // second iteration: opposite
+			if(flags.partOfPair()) {
+				sco = summ.bestUnchosenPScore(mate1);
+			} else {
+				sco = summ.bestUnchosenUScore();
+			}
+			if(sco.valid()) {
+				secondBest[self] = sco.score();
+			}
+			
+			// Third-best
+			thirdBest[self] = mate1 ? prm.bestLtMinscMate1 : prm.bestLtMinscMate2;
+			
+			if(flags.partOfPair()) {
+				if(summ.bestUnchosenPDist(mate1).valid()) {
+					diffEd[self] = best[self].basesAligned() - summ.bestUnchosenPDist(mate1).basesAligned();
+				}
+			} else {
+				if(summ.bestUnchosenUDist().valid()) {
+					diffEd[self] = best[self].basesAligned() - summ.bestUnchosenUDist().basesAligned();
+				}
+			}
+		}
+		TAlScore diff[2] = {MN, MN};
+		for(int self = 0; self < 2; self++) {
+			const TAlScore mx = max(secondBest[self], thirdBest[self]);
+			if(best[self].score() > MN && mx > MN) {
+				diff[self] = best[self].score() - mx;
+			}
+		}
+		TAlScore best_conc = MN, diff_conc = MN;
+		int diffEd_conc = ED_MAX;
+		if(paired && summ.bestCScore().valid()) {
+			best_conc = summ.bestCScore().score();
+			if(summ.bestUnchosenCScore().valid()) {
+				diff_conc = best_conc - summ.bestUnchosenCScore().score();
+			}
+			if(summ.bestUnchosenCDist().valid()) {
+				diffEd_conc = summ.bestCDist().basesAligned() - summ.bestUnchosenCDist().basesAligned();
+			}
+		}
+		o.append("ZT:Z:");
+		// AS:i for current mate
+		itoa10<TAlScore>((int)best[0].score(), buf);
+		o.append(buf);
+		o.append(",");
+		// diff for current mate
+		if(diff[0] > MN) {
+			itoa10<TAlScore>((int)diff[0], buf);
+			o.append(buf);
+		} else {
+			o.append("NA");
+		}
+		o.append(",");
+		// edit distance diff for current mate
+		if(diffEd[0] != ED_MAX) {
+			itoa10<TAlScore>((int)diffEd[0], buf);
+			o.append(buf);
+		} else {
+			o.append("NA");
+		}
+		o.append(",");
+		// AS:i for other mate
+		if(best[1].score() > MN) {
+			itoa10<TAlScore>((int)best[1].score(), buf);
+			o.append(buf);
+		} else {
+			o.append("NA");
+		}
+		o.append(",");
+		// diff for other mate
+		if(diff[1] > MN) {
+			itoa10<TAlScore>((int)diff[1], buf);
+			o.append(buf);
+		} else {
+			o.append("NA");
+		}
+		o.append(",");
+		// Sum of AS:i for aligned pairs
+		if(best_conc > MN) {
+			itoa10<TAlScore>((int)best_conc, buf);
+			o.append(buf);
+		} else {
+			o.append("NA");
+		}
+		o.append(",");
+		// Diff for aligned pairs
+		if(diff_conc > MN) {
+			itoa10<TAlScore>((int)diff_conc, buf);
+			o.append(buf);
+		} else {
+			o.append("NA");
+		}
+		o.append(",");
+		// Edit distance diff for aligned pairs
+		if(diffEd_conc != ED_MAX) {
+			itoa10<TAlScore>((int)diffEd_conc, buf);
+			o.append(buf);
+		} else {
+			o.append("NA");
+		}
+	}
 }
 
 /**

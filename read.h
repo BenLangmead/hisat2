@@ -524,7 +524,7 @@ struct PerReadMetrics {
 	
 	TAlScore bestLtMinscMate1; // best invalid score observed for mate 1
 	TAlScore bestLtMinscMate2; // best invalid score observed for mate 2
-	
+
 	// For collecting information to go into an FM string
 	bool doFmString;
 	FmString fmString;

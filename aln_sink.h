@@ -2767,13 +2767,13 @@ size_t AlnSinkWrap<index_t>::selectByScore(
 	buf.resize(sz);
 	// Sort by score.  If reads are pairs, sort by sum of mate scores.
 	for(size_t i = 0; i < sz; i++) {
-		TAlScore tmp_sc_1 = (*rs1)[i].score().hisat2_score();
+		//TAlScore tmp_sc_1 = (*rs1)[i].score().hisat2_score();
 		AlnScore tmp_alnsc_1 = (*rs1)[i].score();
-		tmp_alnsc_1.score_ = tmp_sc_1;
+		//tmp_alnsc_1.score_ = tmp_sc_1;
 		if(rs2 != NULL) {
-			TAlScore tmp_sc_2 = (*rs2)[i].score().hisat2_score();
+			//TAlScore tmp_sc_2 = (*rs2)[i].score().hisat2_score();
 			AlnScore tmp_alnsc_2 = (*rs2)[i].score();
-			tmp_alnsc_2.score_ =tmp_sc_2;
+			//tmp_alnsc_2.score_ =tmp_sc_2;
 			buf[i].first = tmp_alnsc_1 + tmp_alnsc_2;
 		} else {
 			buf[i].first = tmp_alnsc_1;

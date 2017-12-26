@@ -29,7 +29,6 @@ using namespace std;
  */
 BitPairReference::BitPairReference(
 	const string& in,
-	bool color,
 	bool sanity,
 	EList<string>* infiles,
 	EList<SString<char> >* origs,
@@ -447,13 +446,13 @@ int BitPairReference::getStretch(
 	uint64_t off = 0;
 	int64_t offset = 4;
 	bool firstStretch = true;
-	bool binarySearched = false;
+	ASSERT_ONLY(bool binarySearched = false);
 	uint64_t left  = reci;
 	uint64_t right = recf;
 	uint64_t mid   = 0;
 	// For all records pertaining to the target reference sequence...
 	for(uint64_t i = reci; i < recf; i++) {
-		uint64_t origBufOff = bufOff;
+		ASSERT_ONLY(uint64_t origBufOff = bufOff);
 		assert_geq(toff, off);
 		if (firstStretch && recf > reci + 16){
 			// binary search finds smallest i s.t. toff >= cumRefOff_[i]
@@ -466,10 +465,10 @@ int BitPairReference::getStretch(
 			}
 			off = cumRefOff_[left];
 			bufOff = cumUnambig_[left];
-			origBufOff = bufOff;
+			ASSERT_ONLY(origBufOff = bufOff);
 			i = left;
 			assert(cumRefOff_[i+1] == 0 || cumRefOff_[i+1] > toff);
-			binarySearched = true;
+			ASSERT_ONLY(binarySearched = true);
 		}
 		off += recs_[i].off; // skip Ns at beginning of stretch
 		assert_gt(count, 0);
@@ -611,32 +610,10 @@ BitPairReference::szsFromFasta(
 		// into a vector of RefRecords.  The input streams are reset once
 		// it's done.
 		writeIndex<int32_t>(fout3, 1, bigEndian); // endianness sentinel
-		bool color = parms.color;
-		if(color) {
-			parms.color = false;
-			// Make sure the .3.gfm_ext and .4.gfm_ext files contain
-			// nucleotides; not colors
-			TIndexOff numSeqs = 0;
-			ASSERT_ONLY(std::pair<size_t, size_t> sztot2 =)
-			fastaRefReadSizes(is, szs, parms, &bpout, numSeqs);
-			parms.color = true;
-			writeIndex<TIndexOffU>(fout3, (TIndexOffU)szs.size(), bigEndian); // write # records
-			for(size_t i = 0; i < szs.size(); i++) {
-				szs[i].write(fout3, bigEndian);
-			}
-			szs.clear();
-			// Now read in the colorspace size records; these are
-			// the ones that were indexed
-			TIndexOff numSeqs2 = 0;
-			sztot = fastaRefReadSizes(is, szs, parms, NULL, numSeqs2);
-			assert_eq(numSeqs, numSeqs2);
-			assert_eq(sztot2.second, sztot.second + numSeqs);
-		} else {
-			TIndexOff numSeqs = 0;
-			sztot = fastaRefReadSizes(is, szs, parms, &bpout, numSeqs);
-			writeIndex<TIndexOffU>(fout3, (TIndexOffU)szs.size(), bigEndian); // write # records
-			for(size_t i = 0; i < szs.size(); i++) szs[i].write(fout3, bigEndian);
-		}
+		TIndexOff numSeqs = 0;
+		sztot = fastaRefReadSizes(is, szs, parms, &bpout, numSeqs);
+		writeIndex<TIndexOffU>(fout3, (TIndexOffU)szs.size(), bigEndian); // write # records
+		for(size_t i = 0; i < szs.size(); i++) szs[i].write(fout3, bigEndian);
 		if(sztot.first == 0) {
 			cerr << "Error: No unambiguous stretches of characters in the input.  Aborting..." << endl;
 			throw 1;
@@ -650,19 +627,6 @@ BitPairReference::szsFromFasta(
 		// genome into a vector of RefRecords
 		TIndexOff numSeqs = 0;
 		sztot = fastaRefReadSizes(is, szs, parms, NULL, numSeqs);
-#ifndef NDEBUG
-		if(parms.color) {
-			parms.color = false;
-			EList<RefRecord> szs2(EBWTB_CAT);
-			TIndexOff numSeqs2 = 0;
-			ASSERT_ONLY(std::pair<size_t, size_t> sztot2 =)
-			fastaRefReadSizes(is, szs2, parms, NULL, numSeqs2);
-			assert_eq(numSeqs, numSeqs2);
-			// One less color than base
-			assert_geq(sztot2.second, sztot.second + numSeqs);
-			parms.color = true;
-		}
-#endif
 	}
 	return sztot;
 }

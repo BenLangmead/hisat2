@@ -576,7 +576,7 @@ bool AlnRes::matchesRef(
 	rdseq.clear();
 	rdseq = rd.patFw;
 	if(!fw) {
-		rdseq.reverseComp(false);
+		rdseq.reverseComp();
 	}
 	assert_eq(rdrows_, rdseq.length());
 	// rdseq is the nucleotide sequence from upstream to downstream on the
@@ -1264,7 +1264,7 @@ bool AlnFlags::printYF(BTString& o, bool first) const {
 	else if(!nfilt_  ) flag = "NS";
 	else if(!scfilt_ ) flag = "SC";
 	else if(!qcfilt_ ) flag = "QC";
-	if(flag > 0) {
+	if(*flag != 0) {
 		if(!first) o.append('\t');
 		o.append("YF:Z:");
 		o.append(flag);

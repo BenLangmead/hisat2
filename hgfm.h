@@ -2163,7 +2163,11 @@ HGFM<index_t, local_index_t>::HGFM(
     writeI32(fout5, -flags, be); // BTL: chunkRate is now deprecated
     
     assert_gt(this->_nthreads, 0);
-    AutoArray<tthread::thread*> threads(this->_nthreads - 1);    
+#ifdef WITH_TBB
+    tbb::task_group tbb_grp;
+#else
+    AutoArray<tthread::thread*> threads(this->_nthreads - 1);
+#endif
     EList<ThreadParam> tParams;
     for(index_t t = 0; t < (index_t)this->_nthreads; t++) {
         tParams.expand();
@@ -2177,7 +2181,11 @@ HGFM<index_t, local_index_t>::HGFM(
         tParams.back().seed = seed;
         if(t + 1 < (index_t)this->_nthreads) {
             tParams.back().mainThread = false;
+#ifdef WITH_TBB
+            tbb_grp.run(new std::thread(gbwt_worker, (void*)&tParams.back()));
+#else
             threads[t] = new tthread::thread(gbwt_worker, (void*)&tParams.back());
+#endif
         } else {
             tParams.back().mainThread = true;
         }
@@ -2353,10 +2361,14 @@ HGFM<index_t, local_index_t>::HGFM(
     }
     assert_eq(curr_sztot, sztot);
     if(this->_nthreads > 1) {
+#ifdef WITH_TBB
+        tbb_grp.wait();
+#else
         for(index_t i = 0; i + 1 < (index_t)this->_nthreads; i++) {
             tParams[i].last = true;
             threads[i]->join();
         }
+#endif
     }
     
     fout5 << '\0';

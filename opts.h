@@ -36,6 +36,8 @@ enum {
 	ARG_PARTITION,              // --partition
 	ARG_INTEGER_QUALS,          // --int-quals
 	ARG_FILEPAR,                // --filepar
+	ARG_BUFFER_SIZE,            // --buffer-size
+	ARG_READS_PER_BATCH,        // --reads-per-batch
 	ARG_SHMEM,                  // --shmem
 	ARG_MM,                     // --mm
 	ARG_MMSWEEP,                // --mmsweep
@@ -53,7 +55,6 @@ enum {
 	ARG_PHRED64,                // --phred64
 	ARG_PHRED33,                // --phred33
 	ARG_HADOOPOUT,              // --hadoopout
-	ARG_FUZZY,                  // --fuzzy
 	ARG_FULLREF,                // --fullref
 	ARG_USAGE,                  // --usage
 	ARG_SNPPHRED,               // --snpphred
@@ -153,6 +154,8 @@ enum {
 	ARG_DESC_LANDING,           // --desc-landing
 	ARG_DESC_EXP,               // --desc-exp
 	ARG_DESC_FMOPS,             // --desc-fmops
+	ARG_BLOCK_BYTES,            // --input-block-bytes
+	ARG_READS_PER_BLOCK,        // --input-reads-per-block
     ARG_NO_TEMPSPLICESITE,
     ARG_PEN_CANSPLICE,
     ARG_PEN_NONCANSPLICE,

@@ -29,6 +29,7 @@
 #include "mem_ids.h"
 #include "ls.h"
 #include "btypes.h"
+#include "threading.h"
 
 using namespace std;
 
@@ -803,11 +804,17 @@ void DifferenceCoverSample<TStr>::build(int nthreads) {
                         tparams.back().boundaries = &boundaries;
                         tparams.back().cur = &cur;
                         tparams.back().mutex = &mutex;
-                        threads[tid] = new tthread::thread(VSorting_worker<TStr>, (void*)&tparams.back());
+#ifdef WITH_TBB
+                        tbb_grp.run(VSorting_worker<TStr>(((void*)&tparams[tid])));
+                    }
+                    tbb_grp.wait();
+#else
+                        threads[tid] = new tthread::thread(VSorting_worker<TStr>, (void*)&tparams[tid]);
                     }
                     for (int tid = 0; tid < nthreads; tid++) {
                         threads[tid]->join();
                     }
+#endif
                 }
                 if(this->sanityCheck()) {
                     sanityCheckOrderedSufs(t, t.length(), sPrimeArr, sPrimeSz, v);

@@ -912,18 +912,13 @@ public:
 	 */
 	explicit S2bDnaString(
 		const std::basic_string<char>& str,
-		bool chars = false,
-		bool colors = false) :
+		bool chars = false) :
 		cs_(NULL),
 		printcs_(NULL),
 		len_(0)
 	{
 		if(chars) {
-			if(colors) {
-				installColors(str.c_str(), str.length());
-			} else {
-				installChars(str.c_str(), str.length());
-			}
+			installChars(str.c_str(), str.length());
 		} else {
 			install(str.c_str(), str.length());
 		}
@@ -935,18 +930,13 @@ public:
 	explicit S2bDnaString(
 		const char* b,
 		size_t sz,
-		bool chars = false,
-		bool colors = false) :
+		bool chars = false) :
 		cs_(NULL),
 		printcs_(NULL),
 		len_(0)
 	{
 		if(chars) {
-			if(colors) {
-				installColors(b, sz);
-			} else {
-				installChars(b, sz);
-			}
+			installChars(b, sz);
 		} else {
 			install(b, sz);
 		}
@@ -957,18 +947,13 @@ public:
 	 */
 	explicit S2bDnaString(
 		const char* b,
-		bool chars = false,
-		bool colors = false) :
+		bool chars = false) :
 		cs_(NULL),
 		printcs_(NULL),
 		len_(0)
 	{
 		if(chars) {
-			if(colors) {
-				installColors(b, strlen(b));
-			} else {
-				installChars(b, strlen(b));
-			}
+			installChars(b, strlen(b));
 		} else {
 			install(b, strlen(b));
 		}
@@ -1033,16 +1018,7 @@ public:
 		assert_range(0, 3, c);
 		return "ACGT"[c];
 	}
-
-	/**
-	 * Return color character corresponding to element 'idx'.
-	 */
-	char toColor(size_t idx) const {
-		int c = (int)get(idx);
-		assert_range(0, 3, c);
-		return "0123"[c];
-	}
-
+	
 	/**
 	 * Return ith character from the left of either the forward or the
 	 * reverse version of the read.
@@ -1104,15 +1080,6 @@ public:
 		assert_in(toupper(c), "ACGT");
 		int bp = asc2dna[c];
 		set(bp, idx);
-	}
-
-	/**
-	 * Set character at index 'idx' to color char 'c'.
-	 */
-	void setColor(int c, size_t idx) {
-		assert_in(toupper(c), "0123");
-		int co = asc2col[c];
-		set(co, idx);
 	}
 
 	/**
@@ -1192,27 +1159,6 @@ public:
 	}
 
 	/**
-	 * Copy 'sz' color characters from buffer 'b' into this packed string.
-	 */
-	void installColors(const char* b, size_t sz) {
-		if(sz == 0) return;
-		resize(sz);
-		size_t wordi = 0;
-		for(size_t i = 0; i < sz; i += 16) {
-			uint32_t word = 0;
-			for(int j = 0; j < 16 && (size_t)(i+j) < sz; j++) {
-				char c = b[i+j];
-				assert_in(c, "0123");
-				int bp = asc2col[(int)c];
-				assert_range(0, 3, (int)bp);
-				uint32_t shift = (uint32_t)j << 1;
-				word |= (bp << shift);
-			}
-			cs_[wordi++] = word;
-		}
-	}
-
-	/**
 	 * Copy 'sz' DNA characters from buffer 'b' into this packed string.
 	 */
 	void install(const char* b) {
@@ -1225,14 +1171,7 @@ public:
 	void installChars(const char* b) {
 		installChars(b, strlen(b));
 	}
-
-	/**
-	 * Copy 'sz' DNA characters from buffer 'b' into this packed string.
-	 */
-	void installColors(const char* b) {
-		installColors(b, strlen(b));
-	}
-
+	
 	/**
 	 * Copy 'sz' DNA characters from buffer 'b' into this packed string.
 	 */
@@ -1245,13 +1184,6 @@ public:
 	 */
 	void installChars(const std::basic_string<char>& b) {
 		installChars(b.c_str(), b.length());
-	}
-
-	/**
-	 * Copy 'sz' DNA characters from buffer 'b' into this packed string.
-	 */
-	void installColors(const std::basic_string<char>& b) {
-		installColors(b.c_str(), b.length());
 	}
 
 	/**
@@ -1313,38 +1245,6 @@ public:
 	 */
 	void installReverseChars(const char* b) {
 		installReverseChars(b, strlen(b));
-	}
-
-	/**
-	 * Copy 'sz' bytes from buffer of color characters 'b' into this string,
-	 * reversing them in the process.
-	 */
-	void installReverseColors(const char* b, size_t sz) {
-		resize(sz);
-		if(sz == 0) return;
-		size_t wordi = 0;
-		size_t bpi   = 0;
-		cs_[0] = 0;
-		for(size_t i =sz; i > 0; i--) {
-			char c = b[i-1];
-			assert_in(c, "0123");
-			int bp = asc2col[(int)c];
-			assert_range(0, 3, bp);
-			cs_[wordi] |= (bp << (bpi<<1));
-			if(bpi == 15) {
-				wordi++;
-				cs_[wordi] = 0;
-				bpi = 0;
-			} else bpi++;
-		}
-	}
-
-	/**
-	 * Copy all chars from buffer of color characters 'b' into this string,
-	 * reversing them in the process.
-	 */
-	void installReverseColors(const char* b) {
-		installReverseColors(b, strlen(b));
 	}
 
 	/**
@@ -1514,13 +1414,12 @@ public:
 	}
 
 	/**
-	 * Return the ith character in the window defined by fw, color, depth and
+	 * Return the ith character in the window defined by fw, depth and
 	 * len.
 	 */
 	char windowGetDna(
 		size_t i,
 		bool   fw,
-		bool   color,
 		size_t depth = 0,
 		size_t len = 0) const
 	{
@@ -1530,22 +1429,18 @@ public:
 		if(fw) {
 			return get(depth+i);
 		} else {
-			return
-				color ?
-					get(depth+len-i-1) :
-					compDna(get(depth+len-i-1));
+			return compDna(get(depth+len-i-1));
 		}
 	}
 
 	/**
 	 * Fill the given DNA buffer with the substring specified by fw,
-	 * color, depth and len.
+	 * depth and len.
 	 */
 	template<typename T>
 	void windowGetDna(
 		T&     buf,
 		bool   fw,
-		bool   color,
 		size_t depth = 0,
 		size_t len = 0) const
 	{
@@ -1556,9 +1451,7 @@ public:
 			buf.set(
 				(fw ?
 					get(depth+i) :
-					(color ?
-						get(depth+len-i-1) :
-						compDna(get(depth+len-i-1)))), i);
+					compDna(get(depth+len-i-1))), i);
 		}
 	}
 
@@ -1984,11 +1877,15 @@ public:
 	/**
 	 * Trim len characters from the end of the string.
 	 */
-	void trimEnd(size_t len) {
-		if(len >= len_) len_ = 0;
-		else len_ -= len;
+	size_t trimEnd(size_t len) {
+		if(len >= len_) {
+			size_t ret = len_;
+			len_ = 0;
+			return ret;
+		}
+		len_ -= len;
+		return len;
 	}
-
 	/**
 	 * Copy 'sz' bytes from buffer 'b' into this string.
 	 */
@@ -2446,9 +2343,14 @@ public:
 	/**
 	 * Trim len characters from the end of the string.
 	 */
-	void trimEnd(size_t len) {
-		if(len >= len_) len_ = 0;
-		else len_ -= len;
+	size_t trimEnd(size_t len) {
+		if(len >= len_) {
+			size_t ret = len_;
+			len_ = 0;
+			return ret;
+		}
+		len_ -= len;
+		return len;
 	}
 
 	/**
@@ -2584,16 +2486,11 @@ public:
 	 */
 	explicit SDnaStringFixed(
 		const char* b,
-		bool chars = false,
-		bool colors = false) :
+		bool chars = false) :
 		SStringFixed<char, S>()
 	{
 		if(chars) {
-			if(colors) {
-				installColors(b, strlen(b));
-			} else {
-				installChars(b, strlen(b));
-			}
+			installChars(b, strlen(b));
 		} else {
 			install(b, strlen(b));
 		}
@@ -2628,25 +2525,21 @@ public:
 	}
 
 	/**
-	 * Either reverse or reverse-complement (depending on "color") this
+	 * Either reverse or reverse-complement this
 	 * DNA buffer in-place.
 	 */
-	void reverseComp(bool color = false) {
-		if(color) {
-			this->reverse();
-		} else {
-			for(size_t i = 0; i < (this->len_ >> 1); i++) {
-				char tmp1 = (this->cs_[i] == 4 ? 4 : this->cs_[i] ^ 3);
-				char tmp2 = (this->cs_[this->len_-i-1] == 4 ? 4 : this->cs_[this->len_-i-1] ^ 3);
-				this->cs_[i] = tmp2;
-				this->cs_[this->len_-i-1] = tmp1;
-			}
-			// Do middle element iff there are an odd number
-			if((this->len_ & 1) != 0) {
-				char tmp = this->cs_[this->len_ >> 1];
-				tmp = (tmp == 4 ? 4 : tmp ^ 3);
-				this->cs_[this->len_ >> 1] = tmp;
-			}
+	void reverseComp() {
+		for(size_t i = 0; i < (this->len_ >> 1); i++) {
+			char tmp1 = (this->cs_[i] == 4 ? 4 : this->cs_[i] ^ 3);
+			char tmp2 = (this->cs_[this->len_-i-1] == 4 ? 4 : this->cs_[this->len_-i-1] ^ 3);
+			this->cs_[i] = tmp2;
+			this->cs_[this->len_-i-1] = tmp1;
+		}
+		// Do middle element iff there are an odd number
+		if((this->len_ & 1) != 0) {
+			char tmp = this->cs_[this->len_ >> 1];
+			tmp = (tmp == 4 ? 4 : tmp ^ 3);
+			this->cs_[this->len_ >> 1] = tmp;
 		}
 	}
 
@@ -2681,34 +2574,11 @@ public:
 	}
 
 	/**
-	 * Copy buffer 'b' of ASCII color characters into normal DNA
-	 * characters.
-	 */
-	virtual void installColors(const char* b, size_t sz) {
-		assert_leq(sz, S);
-		for(size_t i = 0; i < sz; i++) {
-			assert_in(b[i], "0123.");
-			this->cs_[i] = asc2col[(int)b[i]];
-			assert_geq(this->cs_[i], 0);
-			assert_leq(this->cs_[i], 4);
-		}
-		this->len_ = sz;
-	}
-
-	/**
 	 * Copy C++ string of ASCII DNA characters into normal DNA
 	 * characters.
 	 */
 	virtual void installChars(const std::basic_string<char>& str) {
 		installChars(str.c_str(), str.length());
-	}
-
-	/**
-	 * Copy C++ string of ASCII color characters into normal DNA
-	 * characters.
-	 */
-	virtual void installColors(const std::basic_string<char>& str) {
-		installColors(str.c_str(), str.length());
 	}
 
 	/**
@@ -2776,13 +2646,12 @@ public:
 	}
 
 	/**
-	 * Return the ith character in the window defined by fw, color,
+	 * Return the ith character in the window defined by fw,
 	 * depth and len.
 	 */
 	char windowGetDna(
 		size_t i,
 		bool   fw,
-		bool   color,
 		size_t depth = 0,
 		size_t len = 0) const
 	{
@@ -2790,18 +2659,16 @@ public:
 		assert_lt(i, len);
 		assert_leq(len, this->len_ - depth);
 		if(fw) return this->cs_[depth+i];
-		else   return color ? this->cs_[depth+len-i-1] :
-		                      compDna(this->cs_[depth+len-i-1]);
+		else   return compDna(this->cs_[depth+len-i-1]);
 	}
 
 	/**
 	 * Fill the given DNA buffer with the substring specified by fw,
-	 * color, depth and len.
+	 * depth and len.
 	 */
 	void windowGetDna(
 		SDnaStringFixed<S>& buf,
 		bool   fw,
-		bool   color,
 		size_t depth = 0,
 		size_t len = 0) const
 	{
@@ -2809,8 +2676,7 @@ public:
 		assert_leq(len, this->len_ - depth);
 		for(size_t i = 0; i < len; i++) {
 			buf.append(fw ? this->cs_[depth+i] :
-			                (color ? this->cs_[depth+len-i-1] :
-			                         compDna(this->cs_[depth+len-i-1])));
+			                compDna(this->cs_[depth+len-i-1]));
 		}
 	}
 
@@ -2844,16 +2710,11 @@ public:
 	 */
 	explicit SDnaStringExpandable(
 		const std::basic_string<char>& str,
-		bool chars = false,
-		bool colors = false) :
+		bool chars = false) :
 		SStringExpandable<char, S, M>()
 	{
 		if(chars) {
-			if(colors) {
-				installColors(str);
-			} else {
-				installChars(str);
-			}
+			installChars(str);
 		} else {
 			install(str);
 		}
@@ -2865,16 +2726,11 @@ public:
 	explicit SDnaStringExpandable(
 		const char* b,
 		size_t sz,
-		bool chars = false,
-		bool colors = false) :
+		bool chars = false) :
 		SStringExpandable<char, S, M>()
 	{
 		if(chars) {
-			if(colors) {
-				installColors(b, sz);
-			} else {
-				installChars(b, sz);
-			}
+			installChars(b, sz);
 		} else {
 			install(b, sz);
 		}
@@ -2885,11 +2741,10 @@ public:
 	 */
 	explicit SDnaStringExpandable(
 		const char* b,
-		bool chars = false,
-		bool colors = false) :
+		bool chars = false) :
 		SStringExpandable<char, S, M>()
 	{
-		install(b, chars, colors);
+		install(b, chars);
 	}
 
 	virtual ~SDnaStringExpandable() { } // C++ needs this
@@ -2921,25 +2776,21 @@ public:
 	}
 
 	/**
-	 * Either reverse or reverse-complement (depending on "color") this
+	 * Either reverse or reverse-complement this
 	 * DNA buffer in-place.
 	 */
-	void reverseComp(bool color = false) {
-		if(color) {
-			this->reverse();
-		} else {
-			for(size_t i = 0; i < (this->len_ >> 1); i++) {
-				char tmp1 = (this->cs_[i] == 4 ? 4 : this->cs_[i] ^ 3);
-				char tmp2 = (this->cs_[this->len_-i-1] == 4 ? 4 : this->cs_[this->len_-i-1] ^ 3);
-				this->cs_[i] = tmp2;
-				this->cs_[this->len_-i-1] = tmp1;
-			}
-			// Do middle element iff there are an odd number
-			if((this->len_ & 1) != 0) {
-				char tmp = this->cs_[this->len_ >> 1];
-				tmp = (tmp == 4 ? 4 : tmp ^ 3);
-				this->cs_[this->len_ >> 1] = tmp;
-			}
+	void reverseComp() {
+		for(size_t i = 0; i < (this->len_ >> 1); i++) {
+			char tmp1 = (this->cs_[i] == 4 ? 4 : this->cs_[i] ^ 3);
+			char tmp2 = (this->cs_[this->len_-i-1] == 4 ? 4 : this->cs_[this->len_-i-1] ^ 3);
+			this->cs_[i] = tmp2;
+			this->cs_[this->len_-i-1] = tmp1;
+		}
+		// Do middle element iff there are an odd number
+		if((this->len_ & 1) != 0) {
+			char tmp = this->cs_[this->len_ >> 1];
+			tmp = (tmp == 4 ? 4 : tmp ^ 3);
+			this->cs_[this->len_ >> 1] = tmp;
 		}
 	}
 
@@ -2948,15 +2799,10 @@ public:
 	 */
 	virtual void install(
 		const char* b,
-		bool chars = false,
-		bool colors = false)
+		bool chars = false)
 	{
 		if(chars) {
-			if(colors) {
-				installColors(b, strlen(b));
-			} else {
-				installChars(b, strlen(b));
-			}
+			installChars(b, strlen(b));
 		} else {
 			install(b, strlen(b));
 		}
@@ -2989,35 +2835,13 @@ public:
 		}
 		this->len_ = sz;
 	}
-
-	/**
-	 * Copy buffer 'b' of ASCII color characters into normal DNA
-	 * characters.
-	 */
-	virtual void installColors(const char* b, size_t sz) {
-		if(this->sz_ < sz) this->expandCopy((sz + S) * M);
-		for(size_t i = 0; i < sz; i++) {
-			assert_in(b[i], "0123.");
-			this->cs_[i] = asc2col[(int)b[i]];
-			assert_range(0, 4, (int)this->cs_[i]);
-		}
-		this->len_ = sz;
-	}
-
+	
 	/**
 	 * Copy C++ string of ASCII DNA characters into normal DNA
 	 * characters.
 	 */
 	virtual void installChars(const std::basic_string<char>& str) {
 		installChars(str.c_str(), str.length());
-	}
-
-	/**
-	 * Copy C++ string of ASCII color characters into normal DNA
-	 * characters.
-	 */
-	virtual void installColors(const std::basic_string<char>& str) {
-		installColors(str.c_str(), str.length());
 	}
 
 	/**
@@ -3085,13 +2909,12 @@ public:
 	}
 
 	/**
-	 * Return the ith character in the window defined by fw, color,
+	 * Return the ith character in the window defined by fw,
 	 * depth and len.
 	 */
 	char windowGetDna(
 		size_t i,
 		bool   fw,
-		bool   color,
 		size_t depth = 0,
 		size_t len = 0) const
 	{
@@ -3099,18 +2922,16 @@ public:
 		assert_lt(i, len);
 		assert_leq(len, this->len_ - depth);
 		if(fw) return this->cs_[depth+i];
-		else   return color ? this->cs_[depth+len-i-1] :
-		                      compDna(this->cs_[depth+len-i-1]);
+		else   return compDna(this->cs_[depth+len-i-1]);
 	}
 
 	/**
 	 * Fill the given DNA buffer with the substring specified by fw,
-	 * color, depth and len.
+	 * depth and len.
 	 */
 	void windowGetDna(
 		SDnaStringExpandable<S, M>& buf,
 		bool   fw,
-		bool   color,
 		size_t depth = 0,
 		size_t len = 0) const
 	{
@@ -3118,8 +2939,7 @@ public:
 		assert_leq(len, this->len_ - depth);
 		for(size_t i = 0; i < len; i++) {
 			buf.append(fw ? this->cs_[depth+i] :
-			                (color ? this->cs_[depth+len-i-1] :
-			                         compDna(this->cs_[depth+len-i-1])));
+			                compDna(this->cs_[depth+len-i-1]));
 		}
 	}
 
@@ -3205,25 +3025,21 @@ public:
 	}
 
 	/**
-	 * Either reverse or reverse-complement (depending on "color") this
+	 * Either reverse or reverse-complement this
 	 * DNA buffer in-place.
 	 */
-	void reverseComp(bool color = false) {
-		if(color) {
-			this->reverse();
-		} else {
-			for(size_t i = 0; i < (this->len_ >> 1); i++) {
-				char tmp1 = maskcomp[(int)this->cs_[i]];
-				char tmp2 = maskcomp[(int)this->cs_[this->len_-i-1]];
-				this->cs_[i] = tmp2;
-				this->cs_[this->len_-i-1] = tmp1;
-			}
-			// Do middle element iff there are an odd number
-			if((this->len_ & 1) != 0) {
-				char tmp = this->cs_[this->len_ >> 1];
-				tmp = maskcomp[(int)tmp];
-				this->cs_[this->len_ >> 1] = tmp;
-			}
+	void reverseComp() {
+		for(size_t i = 0; i < (this->len_ >> 1); i++) {
+			char tmp1 = maskcomp[(int)this->cs_[i]];
+			char tmp2 = maskcomp[(int)this->cs_[this->len_-i-1]];
+			this->cs_[i] = tmp2;
+			this->cs_[this->len_-i-1] = tmp1;
+		}
+		// Do middle element iff there are an odd number
+		if((this->len_ & 1) != 0) {
+			char tmp = this->cs_[this->len_ >> 1];
+			tmp = maskcomp[(int)tmp];
+			this->cs_[this->len_ >> 1] = tmp;
 		}
 	}
 
@@ -3347,13 +3163,12 @@ public:
 	}
 
 	/**
-	 * Return the ith character in the window defined by fw, color,
+	 * Return the ith character in the window defined by fw,
 	 * depth and len.
 	 */
 	char windowGetDna(
 		size_t i,
 		bool   fw,
-		bool   color,
 		size_t depth = 0,
 		size_t len = 0) const
 	{
@@ -3361,18 +3176,16 @@ public:
 		assert_lt(i, len);
 		assert_leq(len, this->len_ - depth);
 		if(fw) return this->cs_[depth+i];
-		else   return color ? this->cs_[depth+len-i-1] :
-		                      maskcomp[this->cs_[depth+len-i-1]];
+		else   return maskcomp[this->cs_[depth+len-i-1]];
 	}
 
 	/**
 	 * Fill the given DNA buffer with the substring specified by fw,
-	 * color, depth and len.
+	 * depth and len.
 	 */
 	void windowGetDna(
 		SDnaStringFixed<S>& buf,
 		bool   fw,
-		bool   color,
 		size_t depth = 0,
 		size_t len = 0) const
 	{
@@ -3380,8 +3193,7 @@ public:
 		assert_leq(len, this->len_ - depth);
 		for(size_t i = 0; i < len; i++) {
 			buf.append(fw ? this->cs_[depth+i] :
-			                (color ? this->cs_[depth+len-i-1] :
-			                         maskcomp[this->cs_[depth+len-i-1]]));
+			                maskcomp[this->cs_[depth+len-i-1]]);
 		}
 	}
 

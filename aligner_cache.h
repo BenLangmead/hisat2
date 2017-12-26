@@ -449,7 +449,7 @@ public:
 		samap_(CACHE_PAGE_SZ, CA_CAT),
 		salist_(CA_CAT),
 		shared_(shared),
-        mutex_m(),
+		mutex_m(),
 		version_(0)
 	{
 	}
@@ -467,7 +467,7 @@ public:
 		index_t& nelt,
 		bool getLock = true)
 	{
-        ThreadSafe ts(lockPtr(), shared_ && getLock);
+        ThreadSafe ts(mutex_m);
 		assert(qv.repOk(*this));
 		const index_t refi = qv.offset();
 		const index_t reff = refi + qv.numRanges();
@@ -527,7 +527,7 @@ public:
 		bool *added,
 		bool getLock = true)
 	{
-        ThreadSafe ts(lockPtr(), shared_ && getLock);
+        ThreadSafe ts(mutex_m);
 		assert(qk.cacheable());
 		QNode *n = qmap_.add(pool(), qk, added);
 		return (n != NULL ? &n->payload : NULL);
@@ -552,7 +552,7 @@ public:
 	 * reads will have to be re-aligned.
 	 */
 	void clear(bool getLock = true) {
-        ThreadSafe ts(lockPtr(), shared_ && getLock);
+        ThreadSafe ts(mutex_m);
 		pool_.clear();
 		qmap_.clear();
 		qlist_.clear();
@@ -591,14 +591,6 @@ public:
 	 */
 	MUTEX_T& lock() {
 	    return mutex_m;
-	}
-
-	/**
-	 * Return a const pointer to the lock object.  This allows us to
-	 * write const member functions that grab the lock.
-	 */
-	MUTEX_T* lockPtr() const {
-	    return const_cast<MUTEX_T*>(&mutex_m);
 	}
 	
 	/**
@@ -966,7 +958,7 @@ bool AlignmentCache<index_t>::addOnTheFly(
 								 index_t botb,      // bottom range elt in BWT' index
 								 bool getLock)
 {
-    ThreadSafe ts(lockPtr(), shared_ && getLock);
+    ThreadSafe ts(mutex_m);
 	bool added = true;
 	// If this is the first reference sequence we're associating with
 	// the query sequence, initialize the QVal.

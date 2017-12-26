@@ -41,24 +41,82 @@ class OutputQueue {
 public:
 
 	OutputQueue(
-		OutFileBuf& obuf,
+		const std::string& ofn, // empty -> stdin
+		size_t output_buffer_size,
 		bool reorder,
 		size_t nthreads,
 		bool threadSafe,
+		int perThreadBufSize,
 		TReadId rdid = 0) :
-		obuf_(obuf),
+		ofh_(stdout),
+		obuf_(NULL),
 		cur_(rdid),
-		nstarted_(0),
-		nfinished_(0),
-		nflushed_(0),
 		lines_(RES_CAT),
 		started_(RES_CAT),
 		finished_(RES_CAT),
 		reorder_(reorder),
 		threadSafe_(threadSafe),
-        mutex_m()
+		mutex_m(),
+		nthreads_(nthreads),
+		perThreadBuf_(NULL),
+		perThreadCounter_(NULL),
+		perThreadStarted_(NULL),
+		perThreadFinished_(NULL),
+		perThreadFlushed_(NULL),
+		perThreadBufSize_(perThreadBufSize)
 	{
-		assert(nthreads <= 1 || threadSafe);
+		assert_gt(nthreads_, 0);
+		assert(nthreads_ == 1 || threadSafe);
+        assert_gt(perThreadBufSize_, 0);
+		perThreadBuf_ = new BTString*[nthreads_];
+		perThreadCounter_ = new int[nthreads_ * 4];
+		perThreadStarted_ = perThreadCounter_ + nthreads_;
+		perThreadFinished_ = perThreadStarted_ + nthreads_;
+		perThreadFlushed_ = perThreadFinished_ + nthreads_;
+		for(size_t i = 0; i < nthreads_; i++) {
+			perThreadBuf_[i] = new BTString[perThreadBufSize_];
+			perThreadCounter_[i] = 0;
+			perThreadStarted_[i] = 0;
+			perThreadFinished_[i] = 0;
+			perThreadFlushed_[i] = 0;
+		}
+		if(!ofn.empty()) {
+			ofh_ = fopen(ofn.c_str(), "w");
+			if(ofh_ == NULL) {
+				std::cerr << "Error: Could not open alignment output file "
+				          << ofn << std::endl;
+				throw 1;
+			}
+			obuf_ = new char[output_buffer_size];
+			int ret = setvbuf(ofh_, obuf_, _IOFBF, output_buffer_size);
+			if(ret != 0) {
+				std::cerr << "Warning: Could not allocate the proper "
+				          << "buffer size for output file stream. "
+				          << "Return value = " << ret << std::endl;
+			}
+		}
+	}
+
+	~OutputQueue() {
+		if(perThreadBuf_ != NULL) {
+			for(size_t i = 0; i < nthreads_; i++) {
+				delete[] perThreadBuf_[i];
+			}
+			delete[] perThreadBuf_;
+			perThreadBuf_ = NULL;
+		}
+		if(perThreadCounter_ != NULL) {
+			delete[] perThreadCounter_;
+			perThreadCounter_ = NULL;
+		}
+		if(obuf_ != NULL) {
+			delete[] obuf_;
+			obuf_ = NULL;
+		}
+		if(ofh_ != NULL) {
+			fclose(ofh_);
+			ofh_ = NULL;
+		}
 	}
 
 	/**
@@ -83,23 +141,40 @@ public:
 	 * Return the number of records that have been flushed so far.
 	 */
 	TReadId numFlushed() const {
-		return nflushed_;
+		TReadId tot = 0;
+		for(size_t i = 0; i < nthreads_; i++) {
+			tot += perThreadFlushed_[i];
+		}
+		return tot;
 	}
 
 	/**
 	 * Return the number of records that have been started so far.
 	 */
 	TReadId numStarted() const {
-		return nstarted_;
+		TReadId tot = 0;
+		for(size_t i = 0; i < nthreads_; i++) {
+			tot += perThreadStarted_[i];
+		}
+		return tot;
 	}
 
 	/**
 	 * Return the number of records that have been finished so far.
 	 */
 	TReadId numFinished() const {
-		return nfinished_;
+		TReadId tot = 0;
+		for(size_t i = 0; i < nthreads_; i++) {
+			tot += perThreadFinished_[i];
+		}
+		return tot;
 	}
-
+	
+	/**
+	 * Write a c++ string to the write buffer and, if necessary, flush.
+	 */
+	void writeString(const BTString& s);
+	
 	/**
 	 * Write already-committed lines starting from cur_.
 	 */
@@ -107,17 +182,29 @@ public:
 
 protected:
 
-	OutFileBuf&     obuf_;
+	FILE            *ofh_;
+	char            *obuf_;
 	TReadId         cur_;
-	TReadId         nstarted_;
-	TReadId         nfinished_;
-	TReadId         nflushed_;
 	EList<BTString> lines_;
 	EList<bool>     started_;
 	EList<bool>     finished_;
 	bool            reorder_;
 	bool            threadSafe_;
 	MUTEX_T         mutex_m;
+	
+	size_t nthreads_;
+	BTString** perThreadBuf_;
+	int* perThreadCounter_;
+	int* perThreadStarted_;
+	int* perThreadFinished_;
+	int* perThreadFlushed_;
+	int perThreadBufSize_;
+
+private:
+
+	void flushImpl(bool force);
+	void beginReadImpl(TReadId rdid, size_t threadId);
+	void finishReadImpl(const BTString& rec, TReadId rdid, size_t threadId);
 };
 
 class OutputQueueMark {

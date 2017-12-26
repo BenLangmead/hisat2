@@ -122,7 +122,11 @@ void radix_sort_in_place(T* begin, T* end, index_t (*hash)(T&), index_t maxv, in
             if(index[bin + 1] - index[bin] > 1) _radix_sort<T, CMP, index_t>(index[bin], index[bin + 1], hash, right_shift);
         }
     } else {
+#ifdef WITH_TBB
+        tbb::task_group tbb_grp;
+#else
         AutoArray<tthread::thread*> threads(nthreads);
+#endif
         EList<RecurseParams<T, index_t> > params; params.resizeExact(nthreads);
         int st = 0;
         for(int i = 0; i < nthreads; i++) {
@@ -130,16 +134,24 @@ void radix_sort_in_place(T* begin, T* end, index_t (*hash)(T&), index_t maxv, in
             params[i].begin = index + st;
             params[i].log_size = right_shift;
             params[i].num = occupied / nthreads;
+#ifdef WITH_TBB
+            tbb_grp.run(new std::thread(&_radix_sort_worker<T, CMP, index_t>, (void*)&params[i]));
+#else
             threads[i] = new tthread::thread(&_radix_sort_worker<T, CMP, index_t>, (void*)&params[i]);
+#endif
             st += params[i].num;
         }
         //do any remaining bins using main thread
         for(int bin = st; bin < occupied; bin++) {
             if(index[bin + 1] - index[bin] > 1) _radix_sort<T, CMP, index_t>(index[bin], index[bin + 1], hash, right_shift);
         }
+#ifdef WITH_TBB
+        tbb_grp.wait();
+#else
         for(int i = 0; i < nthreads; i++) {
             threads[i]->join();
         }
+#endif
     }
     if(nthreads != 1) cerr << "FINISHED RECURSIVE SORTS: " << time(0) - start << endl;
 }
@@ -196,7 +208,11 @@ void radix_sort_copy(T* begin, T* end, T* o, index_t (*hash)(T&), index_t maxv, 
     //count nodes
     time_t start = time(0);
     EList<CountParams<T, index_t> > cparams; cparams.resizeExact(nthreads);
+#ifdef WITH_TBB
+    tbb::task_group tbb_grp;
+#else
     AutoArray<tthread::thread*> threads1(nthreads);
+#endif
     T* st = begin;
     T* en = st + (end - begin) / nthreads;
     for(int i = 0; i < nthreads; i++) {
@@ -209,7 +225,11 @@ void radix_sort_copy(T* begin, T* end, T* o, index_t (*hash)(T&), index_t maxv, 
         if(nthreads == 1) {
             _count_worker<T, index_t>((void*)&cparams[i]);
         } else {
+#ifdef WITH_TBB
+            tbb_grp.run(new std::thread(&_count_worker<T, index_t>, (void*)&cparams[i]);
+#else
             threads1[i] = new tthread::thread(&_count_worker<T, index_t>, (void*)&cparams[i]);
+#endif
         }
         st = en;
         if(i + 2 == nthreads) {
@@ -219,10 +239,14 @@ void radix_sort_copy(T* begin, T* end, T* o, index_t (*hash)(T&), index_t maxv, 
         }
     }
     if(nthreads > 1) {
+#ifdef WITH_TBB
+        tbb_grp.wait();
+#else
         for(int i = 0; i < nthreads; i++) {
             threads1[i]->join();
             delete threads1[i];
         }
+#endif
     }
     if(nthreads != 1) cerr << "COUNT NUMBER IN EACH BIN: " << time(0) - start << endl;
     start = time(0);
@@ -248,10 +272,15 @@ void radix_sort_copy(T* begin, T* end, T* o, index_t (*hash)(T&), index_t maxv, 
         _write_worker<T, index_t>((void*)&cparams[0]);
     } else {
         for(int i = 0; i < nthreads; i++)
+#ifdef WITH_TBB
+            tbb_grp.run(new std::thread(&_write_worker<T, index_t>, (void*)&cparams[i]));
+        tbb_grp.wait();
+#else
             threads1[i] = new tthread::thread(&_write_worker<T, index_t>, (void*)&cparams[i]);
         for(int i = 0; i < nthreads; i++) {
             threads1[i]->join();
         }
+#endif
     }
     for(int i = 0; i < nthreads; i++) {
         delete[] cparams[i].count;
@@ -278,18 +307,26 @@ void radix_sort_copy(T* begin, T* end, T* o, index_t (*hash)(T&), index_t maxv, 
                         && (index_t)(index[params[i].num + st] - index[st]) < remaining_elements / (nthreads - i))
                 params[i].num++;
             cerr << params[i].num << " " << (index_t)(index[params[i].num + st] - index[st]) << endl;
-            threads[i] = new tthread::thread(&_radix_sort_worker<T, CMP, index_t>, (void*)&params[i]);
             st += params[i].num;
+#ifdef WITH_TBB
+            tbb_grp.run(new std::thread(&_radix_sort_worker<T, CMP, index_t>, (void*)&params[i]));
+#else
+            threads[i] = new tthread::thread(&_radix_sort_worker<T, CMP, index_t>, (void*)&params[i]);
+#endif
         }
+
         //do any remaining bins using main thread
         for(int bin = st; bin < occupied; bin++) {
             if(index[bin + 1] - index[bin] > 1)
                 _radix_sort<T, CMP, index_t>(index[bin], index[bin + 1], hash, right_shift);
         }
-        for(int i = 0; i < nthreads; i++) {
-            threads[i]->join();
-            delete threads[i];
+#ifdef WITH_TBB
+        tbb_grp.wait();
+#else
+        for (int tid = 0; tid < nthreads; tid++) {
+            threads[tid]->join();
         }
+#endif
     }
     if(nthreads != 1) cerr << "FINISHED RECURSIVE SORTS: " << time(0) - start << endl;
 }

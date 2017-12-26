@@ -29,10 +29,8 @@
  * 1. All the nucleotide edits
  * 2. All the "edits" where an ambiguous reference char is resolved to
  *    an unambiguous char.
- * 3. All the color edits (if applicable)
- * 4. All the color miscalls (if applicable).  This is a subset of 3.
- * 5. The score of the best alginment
- * 6. The score of the second-best alignment
+ * 3. The score of the best alginment
+ * 4. The score of the second-best alignment
  *
  * Having scores for the best and second-best alignments gives us an
  * idea of where gaps may make reassembly beneficial.
@@ -101,9 +99,6 @@ struct SwResult {
 	uint64_t swsucc; // # DP problems resulting in alignment
 	uint64_t swfail; // # DP problems not resulting in alignment
 	uint64_t swbts;  // # DP backtrace steps
-	
-	int nup;         // upstream decoded nucleotide; for colorspace reads
-	int ndn;         // downstream decoded nucleotide; for colorspace reads
 };
 
 /**
@@ -214,8 +209,8 @@ struct SwMetrics {
 	 * object.  This is the only safe way to update a SwMetrics shared
 	 * by multiple threads.
 	 */
-	void merge(const SwMetrics& r, bool getLock = false) {
-        ThreadSafe ts(&mutex_m, getLock);
+	void merge(const SwMetrics& r) {
+        ThreadSafe ts(mutex_m);
 		sws        += r.sws;
 		sws10      += r.sws10;
 		sws5       += r.sws5;

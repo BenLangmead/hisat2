@@ -18,14 +18,16 @@
  */
 
 #include "outq.h"
+#include <stdio.h>
 
 /**
  * Caller is telling us that they're about to write output record(s) for
  * the read with the given id.
  */
-void OutputQueue::beginRead(TReadId rdid, size_t threadId) {
-	ThreadSafe t(&mutex_m, threadSafe_);
-	nstarted_++;
+void OutputQueue::beginReadImpl(TReadId rdid, size_t threadId) {
+	assert_lt(threadId, nthreads_);
+	assert_leq(perThreadCounter_[threadId], perThreadBufSize_);
+	perThreadStarted_[threadId]++;
 	if(reorder_) {
 		assert_geq(rdid, cur_);
 		assert_eq(lines_.size(), finished_.size());
@@ -45,11 +47,20 @@ void OutputQueue::beginRead(TReadId rdid, size_t threadId) {
 	}
 }
 
+void OutputQueue::beginRead(TReadId rdid, size_t threadId) {
+	if(reorder_ && threadSafe_) {
+		ThreadSafe ts(mutex_m);
+		beginReadImpl(rdid, threadId);
+	} else {
+		beginReadImpl(rdid, threadId);
+	}
+}
+
 /**
  * Writer is finished writing to 
  */
-void OutputQueue::finishRead(const BTString& rec, TReadId rdid, size_t threadId) {
-	ThreadSafe t(&mutex_m, threadSafe_);
+void OutputQueue::finishReadImpl(const BTString& rec, TReadId rdid, size_t threadId) {
+	assert_lt(threadId, nthreads_);
 	if(reorder_) {
 		assert_geq(rdid, cur_);
 		assert_eq(lines_.size(), finished_.size());
@@ -58,25 +69,50 @@ void OutputQueue::finishRead(const BTString& rec, TReadId rdid, size_t threadId)
 		assert(started_[rdid - cur_]);
 		assert(!finished_[rdid - cur_]);
 		lines_[rdid - cur_] = rec;
-		nfinished_++;
+		perThreadFinished_[threadId]++;
 		finished_[rdid - cur_] = true;
 		flush(false, false); // don't force; already have lock
 	} else {
-		// obuf_ is the OutFileBuf for the output file
-		obuf_.writeString(rec);
-		nfinished_++;
-		nflushed_++;
+		perThreadFinished_[threadId]++;
+		if(perThreadCounter_[threadId] >= perThreadBufSize_) {
+			assert_eq(perThreadCounter_[threadId], perThreadBufSize_);
+			{
+				ThreadSafe ts(mutex_m);
+				for(int i = 0; i < perThreadBufSize_; i++) {
+					writeString(perThreadBuf_[threadId][i]);
+				}
+			}
+			perThreadFlushed_[threadId] += perThreadBufSize_;
+			perThreadCounter_[threadId] = 0;
+		}
+		perThreadBuf_[threadId][perThreadCounter_[threadId]++] = rec;
+	}
+}
+
+void OutputQueue::finishRead(const BTString& rec, TReadId rdid, size_t threadId) {
+	assert_lt(threadId, nthreads_);
+	if(threadSafe_ && reorder_) {
+		ThreadSafe ts(mutex_m);
+		finishReadImpl(rec, rdid, threadId);
+	} else {
+		finishReadImpl(rec, rdid, threadId);
 	}
 }
 
 /**
  * Write already-finished lines starting from cur_.
  */
-void OutputQueue::flush(bool force, bool getLock) {
+void OutputQueue::flushImpl(bool force) {
 	if(!reorder_) {
+		for(size_t i = 0; i < nthreads_; i++) {
+			for(int j = 0; j < perThreadCounter_[i]; j++) {
+				writeString(perThreadBuf_[i][j]);
+			}
+			perThreadFlushed_[i] += perThreadCounter_[i];
+			perThreadCounter_[i] = 0;
+		}
 		return;
 	}
-	ThreadSafe t(&mutex_m, getLock && threadSafe_);
 	size_t nflush = 0;
 	while(nflush < finished_.size() && finished_[nflush]) {
 		assert(started_[nflush]);
@@ -88,14 +124,52 @@ void OutputQueue::flush(bool force, bool getLock) {
 		for(size_t i = 0; i < nflush; i++) {
 			assert(started_[i]);
 			assert(finished_[i]);
-			obuf_.writeString(lines_[i]);
+			writeString(lines_[i]);
 		}
 		lines_.erase(0, nflush);
 		started_.erase(0, nflush);
 		finished_.erase(0, nflush);
 		cur_ += nflush;
-		nflushed_ += nflush;
+		// TODO: index [0]?
+		perThreadFlushed_[0] += nflush;
 	}
+}
+
+/**
+ * Write already-finished lines starting from cur_.
+ */
+void OutputQueue::flush(bool force, bool getLock) {
+	if(getLock && threadSafe_) {
+		ThreadSafe ts(mutex_m);
+		flushImpl(force);
+	} else {
+		flushImpl(force);
+	}
+}
+
+/**
+ * Write a c++ string to the write buffer and, if necessary, flush.
+ */
+void OutputQueue::writeString(const BTString& s) {
+	const size_t slen = s.length();
+#if 0
+	const char *zb = s.toZBuf();
+	for(size_t i = 0; i < slen; i++) {
+		assert_neq('\0', zb[i]);
+		if(putc_unlocked(zb[i], ofh_) == EOF) {
+			perror("putc_unlocked");
+			throw 1;
+		}
+	}
+#else
+	size_t nwritten = fwrite(s.toZBuf(), 1, slen, ofh_);
+	if(nwritten != slen) {
+		cerr << "Wrote only " << nwritten << " out of " << slen
+		     << " bytes to output " << std::endl;
+		perror("fwrite");
+		throw 1;
+	}
+#endif
 }
 
 #ifdef OUTQ_MAIN

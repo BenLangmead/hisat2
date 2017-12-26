@@ -1314,7 +1314,6 @@ int SwDriver<index_t>::extendSeeds(
 								   bool& exhaustive)            // set to true iff we searched all seeds exhaustively
 {
 	bool all = msink->allHits();
-	// typedef std::pair<index_t, index_t> UPair;
 	
 	assert(!reportImmediately || msink != NULL);
 	assert(!reportImmediately || !msink->maxed());
@@ -1961,7 +1960,6 @@ int SwDriver<index_t>::extendSeedsPaired(
 										 bool& exhaustive)
 {
 	bool all = msink->allHits();
-	// typedef std::pair<uint32_t, uint32_t> U32Pair;
 	
 	assert(!reportImmediately || msink != NULL);
 	assert(!reportImmediately || !msink->maxed());

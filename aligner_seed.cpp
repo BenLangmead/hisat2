@@ -333,8 +333,6 @@ enum {
 	SA_ACTION_TYPE_EDIT         // 6
 };
 
-#define MIN(x, y) ((x < y) ? x : y)
-
 #ifdef ALIGNER_SEED_MAIN
 
 #include <getopt.h>
@@ -370,7 +368,6 @@ enum {
 static const char *short_opts = "vCt";
 static struct option long_opts[] = {
 	{(char*)"verbose",  no_argument,       0, 'v'},
-	{(char*)"color",    no_argument,       0, 'C'},
 	{(char*)"timing",   no_argument,       0, 't'},
 	{(char*)"nofw",     no_argument,       0, ARG_NOFW},
 	{(char*)"norc",     no_argument,       0, ARG_NORC},
@@ -389,17 +386,13 @@ static void printUsage(ostream& os) {
 	os << "  --nofw              don't align forward-oriented read" << endl;
 	os << "  --norc              don't align reverse-complemented read" << endl;
 	os << "  -t/--timing         show timing information" << endl;
-	os << "  -C/--color          colorspace mode" << endl;
 	os << "  -v/--verbose        talkative mode" << endl;
 }
 
 bool gNorc = false;
 bool gNofw = false;
-bool gColor = false;
 int gVerbose = 0;
 int gGapBarrier = 1;
-bool gColorExEnds = true;
-int gSnpPhred = 30;
 bool gReportOverhangs = true;
 
 extern void aligner_seed_tests();
@@ -407,7 +400,6 @@ extern void aligner_random_seed_tests(
 	int num_tests,
 	uint32_t qslo,
 	uint32_t qshi,
-	bool color,
 	uint32_t seed);
 
 /**
@@ -428,7 +420,6 @@ int main(int argc, char **argv) {
 			argc, argv, short_opts, long_opts, &option_index);
 		switch (next_option) {
 			case 'v':       gVerbose = true; break;
-			case 'C':       gColor   = true; break;
 			case 't':       timing   = true; break;
 			case ARG_NOFW:  gNofw    = true; break;
 			case ARG_NORC:  gNorc    = true; break;
@@ -441,7 +432,6 @@ int main(int argc, char **argv) {
 					100,     // num references
 					100,   // queries per reference lo
 					400,   // queries per reference hi
-					false, // true -> generate colorspace reference/reads
 					18);   // pseudo-random seed
 				return 0;
 			}
@@ -451,7 +441,6 @@ int main(int argc, char **argv) {
 					100,   // num references
 					100,   // queries per reference lo
 					400,   // queries per reference hi
-					false, // true -> generate colorspace reference/reads
 					seed); // pseudo-random seed
 				return 0;
 			}
@@ -476,7 +465,6 @@ int main(int argc, char **argv) {
 	string gfmBase(reffn);
 	BitPairReference ref(
 		gfmBase,     // base path
-		gColor,      // whether we expect it to be colorspace
 		sanity,      // whether to sanity-check reference as it's loaded
 		NULL,        // fasta files to sanity check reference against
 		NULL,        // another way of specifying original sequences

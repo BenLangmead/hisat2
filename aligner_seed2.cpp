@@ -43,7 +43,6 @@ int main(int argc, char **argv) {
     //                            GCTATATAGCGCGCTTGCATCATTTTGTGT
     //                                           ^
     bool packed = false;
-    int color = 0;
 	pair<GFM*, GFM*> gfms = GFM::fromStrings<SString<char> >(
 		strs,
 		packed,
@@ -1071,8 +1070,8 @@ int main(int argc, char **argv) {
 		false,  // autoMem
 		false); // sanity
     
-    gfms.first->loadIntoMemory (color, -1, true, true, true, true, false);
-    gfms.second->loadIntoMemory(color,  1, true, true, true, true, false);
+    gfms.first->loadIntoMemory (-1, true, true, true, true, false);
+    gfms.second->loadIntoMemory( 1, true, true, true, true, false);
 
 	// Query is longer than ftab and matches exactly once with one read gap,
 	// one ref gap, and one mismatch

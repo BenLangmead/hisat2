@@ -83,6 +83,17 @@ SEARCH_LIBS =
 BUILD_LIBS = 
 INSPECT_LIBS =
 
+ifeq (1,$(NO_SPINLOCK))
+	override EXTRA_FLAGS += -DNO_SPINLOCK
+endif
+
+ifeq (1,$(WITH_TBB))
+	LIBS = $(PTHREAD_LIB) -ltbb -ltbbmalloc_proxy
+	override EXTRA_FLAGS += -DWITH_TBB
+else
+	LIBS = $(PTHREAD_LIB)
+endif
+
 ifeq (1,$(MINGW))
 	BUILD_LIBS = 
 	INSPECT_LIBS = 
@@ -101,10 +112,33 @@ endif
 
 LIBS = $(PTHREAD_LIB)
 
+ifeq (1,$(WITH_THREAD_PROFILING))
+	override EXTRA_FLAGS += -DPER_THREAD_TIMING=1
+endif
+
+ifeq (1,$(WITH_AFFINITY))
+	override EXTRA_FLAGS += -DWITH_AFFINITY=1
+endif
+
+ifeq (1,$(WITH_QUEUELOCK))
+	override EXTRA_FLAGS += -DWITH_QUEUELOCK=1
+endif
+
 SHARED_CPPS = ccnt_lut.cpp ref_read.cpp alphabet.cpp shmem.cpp \
 	edit.cpp gfm.cpp \
 	reference.cpp ds.cpp multikey_qsort.cpp limit.cpp \
-	random_source.cpp tinythread.cpp
+	random_source.cpp
+
+ifeq (1,$(WITH_COHORTLOCK))
+	override EXTRA_FLAGS += -DWITH_COHORTLOCK=1
+	SHARED_CPPS += cohort.cpp cpu_numa_info.cpp
+endif
+
+ifneq (1,$(WITH_TBB))
+	SHARED_CPPS += tinythread.cpp
+endif
+
+
 SEARCH_CPPS = qual.cpp pat.cpp \
 	read_qseq.cpp aligner_seed_policy.cpp \
 	aligner_seed.cpp \
@@ -155,7 +189,7 @@ ifeq (64,$(BITS))
 endif
 SSE_FLAG=-msse2
 
-DEBUG_FLAGS    = -O0 -g3 $(BIToS_FLAG) $(SSE_FLAG)
+DEBUG_FLAGS    = -O0 -g3 $(BITS_FLAG) $(SSE_FLAG)
 DEBUG_DEFS     = -DCOMPILER_OPTIONS="\"$(DEBUG_FLAGS) $(EXTRA_FLAGS)\""
 RELEASE_FLAGS  = -O3 $(BITS_FLAG) $(SSE_FLAG) -funroll-loops -g3
 RELEASE_DEFS   = -DCOMPILER_OPTIONS="\"$(RELEASE_FLAGS) $(EXTRA_FLAGS)\""
@@ -272,7 +306,7 @@ hisat-bp-bin-debug: hisat_bp.cpp $(SEARCH_CPPS) $(SHARED_CPPS) $(HEADERS) $(SEAR
 #
 
 hisat2-build-s: hisat2_build.cpp $(SHARED_CPPS) $(HEADERS)
-	$(CXX) $(RELEASE_FLAGS) $(RELEASE_DEFS) $(EXTRA_FLAGS) \
+	$(CXX) $(RELEASE_FLAGS) $(EXTRA_FLAGS) $(RELEASE_DEFS) \
 	$(DEFS) -DBOWTIE2 $(NOASSERT_FLAGS) -Wall -DMASSIVE_DATA_RLCSA \
 	$(INC) \
 	-o $@ $< \
@@ -280,7 +314,7 @@ hisat2-build-s: hisat2_build.cpp $(SHARED_CPPS) $(HEADERS)
 	$(LIBS) $(BUILD_LIBS)
 
 hisat2-build-l: hisat2_build.cpp $(SHARED_CPPS) $(HEADERS)
-	$(CXX) $(RELEASE_FLAGS) $(RELEASE_DEFS) $(EXTRA_FLAGS) \
+	$(CXX) $(RELEASE_FLAGS) $(EXTRA_FLAGS) $(RELEASE_DEFS) \
 	$(DEFS) -DBOWTIE2 -DBOWTIE_64BIT_INDEX $(NOASSERT_FLAGS) -Wall \
 	$(INC) \
 	-o $@ $< \
@@ -288,7 +322,7 @@ hisat2-build-l: hisat2_build.cpp $(SHARED_CPPS) $(HEADERS)
 	$(LIBS) $(BUILD_LIBS)
 
 hisat2-build-s-debug: hisat2_build.cpp $(SHARED_CPPS) $(HEADERS)
-	$(CXX) $(DEBUG_FLAGS) $(DEBUG_DEFS) $(EXTRA_FLAGS) \
+	$(CXX) $(DEBUG_FLAGS) $(EXTRA_FLAGS) $(DEBUG_DEFS) \
 	$(DEFS) -DBOWTIE2 -Wall -DMASSIVE_DATA_RLCSA \
 	$(INC) \
 	-o $@ $< \
@@ -296,7 +330,7 @@ hisat2-build-s-debug: hisat2_build.cpp $(SHARED_CPPS) $(HEADERS)
 	$(LIBS) $(BUILD_LIBS)
 
 hisat2-build-l-debug: hisat2_build.cpp $(SHARED_CPPS) $(HEADERS)
-	$(CXX) $(DEBUG_FLAGS) $(DEBUG_DEFS) $(EXTRA_FLAGS) \
+	$(CXX) $(DEBUG_FLAGS) $(EXTRA_FLAGS) $(DEBUG_DEFS) \
 	$(DEFS) -DBOWTIE2 -DBOWTIE_64BIT_INDEX -Wall \
 	$(INC) \
 	-o $@ $< \
@@ -308,7 +342,7 @@ hisat2-build-l-debug: hisat2_build.cpp $(SHARED_CPPS) $(HEADERS)
 #
 
 hisat2-align-s: hisat2.cpp $(SEARCH_CPPS) $(SHARED_CPPS) $(HEADERS) $(SEARCH_FRAGMENTS)
-	$(CXX) $(RELEASE_FLAGS) $(RELEASE_DEFS) $(EXTRA_FLAGS) \
+	$(CXX) $(RELEASE_FLAGS) $(EXTRA_FLAGS) $(RELEASE_DEFS) \
 	$(DEFS) $(SRA_DEF) -DBOWTIE2 $(NOASSERT_FLAGS) -Wall \
 	$(INC) $(SEARCH_INC) \
 	-o $@ $< \
@@ -316,7 +350,7 @@ hisat2-align-s: hisat2.cpp $(SEARCH_CPPS) $(SHARED_CPPS) $(HEADERS) $(SEARCH_FRA
 	$(LIBS) $(SRA_LIB) $(SEARCH_LIBS)
 
 hisat2-align-l: hisat2.cpp $(SEARCH_CPPS) $(SHARED_CPPS) $(HEADERS) $(SEARCH_FRAGMENTS)
-	$(CXX) $(RELEASE_FLAGS) $(RELEASE_DEFS) $(EXTRA_FLAGS) \
+	$(CXX) $(RELEASE_FLAGS) $(EXTRA_FLAGS) $(RELEASE_DEFS) \
 	$(DEFS) $(SRA_DEF) -DBOWTIE2 -DBOWTIE_64BIT_INDEX $(NOASSERT_FLAGS) -Wall \
 	$(INC) $(SEARCH_INC) \
 	-o $@ $< \
@@ -324,8 +358,7 @@ hisat2-align-l: hisat2.cpp $(SEARCH_CPPS) $(SHARED_CPPS) $(HEADERS) $(SEARCH_FRA
 	$(LIBS) $(SRA_LIB) $(SEARCH_LIBS)
 
 hisat2-align-s-debug: hisat2.cpp $(SEARCH_CPPS) $(SHARED_CPPS) $(HEADERS) $(SEARCH_FRAGMENTS)
-	$(CXX) $(DEBUG_FLAGS) \
-	$(DEBUG_DEFS) $(EXTRA_FLAGS) \
+	$(CXX) $(DEBUG_FLAGS) $(EXTRA_FLAGS) $(DEBUG_DEFS) \
 	$(DEFS) $(SRA_DEF) -DBOWTIE2 -Wall \
 	$(INC) $(SEARCH_INC) \
 	-o $@ $< \
@@ -333,8 +366,7 @@ hisat2-align-s-debug: hisat2.cpp $(SEARCH_CPPS) $(SHARED_CPPS) $(HEADERS) $(SEAR
 	$(LIBS) $(SRA_LIB) $(SEARCH_LIBS)
 
 hisat2-align-l-debug: hisat2.cpp $(SEARCH_CPPS) $(SHARED_CPPS) $(HEADERS) $(SEARCH_FRAGMENTS)
-	$(CXX) $(DEBUG_FLAGS) \
-	$(DEBUG_DEFS) $(EXTRA_FLAGS) \
+	$(CXX) $(DEBUG_FLAGS) $(EXTRA_FLAGS) $(DEBUG_DEFS) \
 	$(DEFS) $(SRA_DEF) -DBOWTIE2 -DBOWTIE_64BIT_INDEX -Wall \
 	$(INC) $(SEARCH_INC) \
 	-o $@ $< \
@@ -346,8 +378,7 @@ hisat2-align-l-debug: hisat2.cpp $(SEARCH_CPPS) $(SHARED_CPPS) $(HEADERS) $(SEAR
 #
 
 hisat2-inspect-s: hisat2_inspect.cpp $(HEADERS) $(SHARED_CPPS)
-	$(CXX) $(RELEASE_FLAGS) \
-	$(RELEASE_DEFS) $(EXTRA_FLAGS) \
+	$(CXX) $(RELEASE_FLAGS) $(EXTRA_FLAGS) $(RELEASE_DEFS) \
 	$(DEFS) -DBOWTIE2 -DHISAT2_INSPECT_MAIN -Wall \
 	$(INC) -I . \
 	-o $@ $< \
@@ -355,8 +386,7 @@ hisat2-inspect-s: hisat2_inspect.cpp $(HEADERS) $(SHARED_CPPS)
 	$(LIBS) $(INSPECT_LIBS)
 
 hisat2-inspect-l: hisat2_inspect.cpp $(HEADERS) $(SHARED_CPPS)
-	$(CXX) $(RELEASE_FLAGS) \
-	$(RELEASE_DEFS) $(EXTRA_FLAGS) \
+	$(CXX) $(RELEASE_FLAGS) $(EXTRA_FLAGS) $(RELEASE_DEFS) \
 	$(DEFS) -DBOWTIE2 -DBOWTIE_64BIT_INDEX -DHISAT2_INSPECT_MAIN -Wall \
 	$(INC) -I . \
 	-o $@ $< \
@@ -364,8 +394,7 @@ hisat2-inspect-l: hisat2_inspect.cpp $(HEADERS) $(SHARED_CPPS)
 	$(LIBS) $(INSPECT_LIBS)
 
 hisat2-inspect-s-debug: hisat2_inspect.cpp $(HEADERS) $(SHARED_CPPS) 
-	$(CXX) $(DEBUG_FLAGS) \
-	$(DEBUG_DEFS) $(EXTRA_FLAGS) \
+	$(CXX) $(DEBUG_FLAGS) $(EXTRA_FLAGS) $(DEBUG_DEFS) \
 	$(DEFS) -DBOWTIE2 -DHISAT2_INSPECT_MAIN -Wall \
 	$(INC) -I . \
 	-o $@ $< \
@@ -373,8 +402,7 @@ hisat2-inspect-s-debug: hisat2_inspect.cpp $(HEADERS) $(SHARED_CPPS)
 	$(LIBS) $(INSPECT_LIBS)
 
 hisat2-inspect-l-debug: hisat2_inspect.cpp $(HEADERS) $(SHARED_CPPS) 
-	$(CXX) $(DEBUG_FLAGS) \
-	$(DEBUG_DEFS) $(EXTRA_FLAGS) \
+	$(CXX) $(DEBUG_FLAGS) $(EXTRA_FLAGS) $(DEBUG_DEFS) \
 	$(DEFS) -DBOWTIE2 -DBOWTIE_64BIT_INDEX -DHISAT2_INSPECT_MAIN -Wall \
 	$(INC) -I . \
 	-o $@ $< \

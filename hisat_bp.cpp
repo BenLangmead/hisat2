@@ -65,7 +65,6 @@ static EList<string> mates1;  // mated reads (first mate)
 static EList<string> mates2;  // mated reads (second mate)
 static EList<string> mates12; // mated reads (1st/2nd interleaved in 1 file)
 static string adjIdxBase;
-bool gColor;              // colorspace (not supported)
 int gVerbose;             // be talkative
 static bool startVerbose; // be talkative at startup
 int gQuiet;               // print nothing but the alignments
@@ -96,6 +95,7 @@ static uint32_t mhits;    // don't report any hits if there are > mhits
 static int partitionSz;   // output a partitioning key in first field
 static bool useSpinlock;  // false -> don't use of spinlocks even if they're #defines
 static bool fileParallel; // separate threads read separate input files in parallel
+static size_t io_buffer_size; // for setvbuf on input stream
 static bool useShmem;     // use shared memory to hold the index
 static bool useMm;        // use memory-mapped files to hold the index
 static bool mmSweep;      // sweep through memory-mapped files immediately after mapping
@@ -118,7 +118,6 @@ bool gNorc; // don't align rc orientation of read
 static uint32_t fastaContLen;
 static uint32_t fastaContFreq;
 static bool hadoopOut; // print Hadoop status and summary messages
-static bool fuzzy;
 static bool fullRef;
 static bool samTruncQname; // whether to truncate QNAME to 255 chars
 static bool samOmitSecSeqQual; // omit SEQ/QUAL for 2ndary alignments?
@@ -130,8 +129,6 @@ static bool sam_print_xs;  // XS:i
 static bool sam_print_xss; // Xs:i and Ys:i
 static bool sam_print_yn;  // YN:i and Yn:i
 static bool sam_print_xn;
-static bool sam_print_cs;
-static bool sam_print_cq;
 static bool sam_print_x0;
 static bool sam_print_x1;
 static bool sam_print_xm;
@@ -264,7 +261,6 @@ static void resetOptions() {
 	mates2.clear();
 	mates12.clear();
 	adjIdxBase	            = "";
-	gColor                  = false;
 	gVerbose                = 0;
 	startVerbose			= 0;
 	gQuiet					= false;
@@ -295,6 +291,7 @@ static void resetOptions() {
 	partitionSz				= 0;     // output a partitioning key in first field
 	useSpinlock				= true;  // false -> don't use of spinlocks even if they're #defines
 	fileParallel			= false; // separate threads read separate input files in parallel
+	io_buffer_size			= 512*1024; // for setvbuf on input/output stream
 	useShmem				= false; // use shared memory to hold the index
 	useMm					= false; // use memory-mapped files to hold the index
 	mmSweep					= false; // sweep through memory-mapped files immediately after mapping
@@ -318,7 +315,6 @@ static void resetOptions() {
 	fastaContLen			= 0;
 	fastaContFreq			= 0;
 	hadoopOut				= false; // print Hadoop status and summary messages
-	fuzzy					= false; // reads will have alternate basecalls w/ qualities
 	fullRef					= false; // print entire reference name instead of just up to 1st space
 	samTruncQname           = true;  // whether to truncate QNAME to 255 chars
 	samOmitSecSeqQual       = false; // omit SEQ/QUAL for 2ndary alignments?
@@ -330,8 +326,6 @@ static void resetOptions() {
 	sam_print_xss           = false; // Xs:i and Ys:i
 	sam_print_yn            = false; // YN:i and Yn:i
 	sam_print_xn            = true;
-	sam_print_cs            = false;
-	sam_print_cq            = false;
 	sam_print_x0            = true;
 	sam_print_x1            = true;
 	sam_print_xm            = true;
@@ -482,6 +476,7 @@ static struct option long_options[] = {
 	{(char*)"upto",         required_argument, 0,            'u'},
 	{(char*)"version",      no_argument,       0,            ARG_VERSION},
 	{(char*)"filepar",      no_argument,       0,            ARG_FILEPAR},
+	{(char*)"buffer-size",  required_argument, 0,            ARG_BUFFER_SIZE},
 	{(char*)"help",         no_argument,       0,            'h'},
 	{(char*)"threads",      required_argument, 0,            'p'},
 	{(char*)"khits",        required_argument, 0,            'k'},
@@ -512,7 +507,6 @@ static struct option long_options[] = {
 	{(char*)"shmem",        no_argument,       0,            ARG_SHMEM},
 	{(char*)"mmsweep",      no_argument,       0,            ARG_MMSWEEP},
 	{(char*)"hadoopout",    no_argument,       0,            ARG_HADOOPOUT},
-	{(char*)"fuzzy",        no_argument,       0,            ARG_FUZZY},
 	{(char*)"fullref",      no_argument,       0,            ARG_FULLREF},
 	{(char*)"usage",        no_argument,       0,            ARG_USAGE},
 	{(char*)"sam-no-qname-trunc", no_argument, 0,            ARG_SAM_NO_QNAME_TRUNC},
@@ -531,7 +525,6 @@ static struct option long_options[] = {
 	{(char*)"no-HD",        no_argument,       0,            ARG_SAM_NOHEAD},
 	{(char*)"no-SQ",        no_argument,       0,            ARG_SAM_NOSQ},
 	{(char*)"no-unal",      no_argument,       0,            ARG_SAM_NO_UNAL},
-	{(char*)"color",        no_argument,       0,            'C'},
 	{(char*)"sam-RG",       required_argument, 0,            ARG_SAM_RG},
 	{(char*)"sam-rg",       required_argument, 0,            ARG_SAM_RG},
 	{(char*)"sam-rg-id",    required_argument, 0,            ARG_SAM_RGID},
@@ -989,11 +982,6 @@ static void parseOption(int next_option, const char *arg) {
 		case 'r': format = RAW; break;
 		case 'c': format = CMDLINE; break;
 		case ARG_QSEQ: format = QSEQ; break;
-		case 'C': {
-			cerr << "Error: -C specified but Bowtie 2 does not support colorspace input." << endl;
-			throw 1;
-			break;
-		}
 		case 'I':
 			gMinInsert = parseInt(0, "-I arg must be positive", arg);
 			break;
@@ -1038,7 +1026,6 @@ static void parseOption(int next_option, const char *arg) {
 			seedCacheCurrentMB = (uint32_t)parseInt(1, "--seed-cache-sz arg must be at least 1", arg);
 			break;
 		case ARG_REFIDX: noRefNames = true; break;
-		case ARG_FUZZY: fuzzy = true; break;
 		case ARG_FULLREF: fullRef = true; break;
 		case ARG_GAP_BAR:
 			gGapBarrier = parseInt(1, "--gbar must be no less than 1", arg);
@@ -1077,6 +1064,9 @@ static void parseOption(int next_option, const char *arg) {
 			break;
 		case ARG_FILEPAR:
 			fileParallel = true;
+			break;
+		case ARG_BUFFER_SIZE:
+			io_buffer_size = parseInt(1024, "--buffer-size arg must be at least 1024", arg);
 			break;
 		case '3': gTrim3 = parseInt(0, "-3/--trim3 arg must be at least 0", arg); break;
 		case '5': gTrim5 = parseInt(0, "-5/--trim5 arg must be at least 0", arg); break;
@@ -1710,7 +1700,7 @@ struct OuterLoopMetrics {
 		const OuterLoopMetrics& m,
 		bool getLock = false)
 	{
-		ThreadSafe ts(&mutex_m, getLock);
+		ThreadSafe ts(mutex_m);
 		reads += m.reads;
 		bases += m.bases;
 		srreads += m.srreads;
@@ -1795,7 +1785,7 @@ struct PerfMetrics {
         const HIMetrics *hi,
 		bool getLock)
 	{
-		ThreadSafe ts(&mutex_m, getLock);
+		ThreadSafe ts(mutex_m);
 		if(ol != NULL) {
 			olmu.merge(*ol, false);
 		}
@@ -1846,7 +1836,7 @@ struct PerfMetrics {
 		bool sync,            //  synchronize output
 		const BTString *name) // non-NULL name pointer if is per-read record
 	{
-		ThreadSafe ts(&mutex_m, sync);
+		ThreadSafe ts(mutex_m);
 		ostringstream stderrSs;
 		time_t curtime = time(0);
 		char buf[1024];
@@ -2533,6 +2523,7 @@ struct PerfMetrics {
 		if(metricsStderr) stderrSs << buf << '\t';
 		if(o != NULL) { o->writeChars(buf); o->write('\t'); }
 		
+#ifdef USE_MEM_TALLY
 		// 121. Overall memory peak
 		itoa10<size_t>(gMemTally.peak() >> 20, buf);
 		if(metricsStderr) stderrSs << buf << '\t';
@@ -2567,9 +2558,10 @@ struct PerfMetrics {
 		if(o != NULL) { o->writeChars(buf); o->write('\t'); }
 		// 129. Debug memory peak
 		itoa10<size_t>(gMemTally.peak(DEBUG_CAT) >> 20, buf);
-        if(metricsStderr) stderrSs << buf << '\t';
+		if(metricsStderr) stderrSs << buf << '\t';
 		if(o != NULL) { o->writeChars(buf); o->write('\t'); }
-        
+#endif
+
         // 130
         itoa10<size_t>(him.localatts, buf);
 		if(metricsStderr) stderrSs << buf << '\t';
@@ -2796,6 +2788,16 @@ static inline void printEEScoreMsg(
 	x.resetCounters(); \
 }
 
+#ifdef PER_THREAD_TIMING
+/// Based on http://stackoverflow.com/questions/16862620/numa-get-current-node-core
+void get_cpu_and_node(int& cpu, int& node) {
+	unsigned long a,d,c;
+	__asm__ volatile("rdtscp" : "=a" (a), "=d" (d), "=c" (c));
+	node = (c & 0xFFF000)>>12;
+	cpu = c & 0xFFF;
+}
+#endif
+
 /**
  * Called once per thread.  Sets up per-thread pointers to the shared global
  * data structures, creates per-thread structures, then enters the alignment
@@ -2823,7 +2825,21 @@ static void multiseedSearchWorker_hisat_bp(void *vp) {
 	AlignmentCache<index_t>&         scShared = *multiseed_ca;
 	AlnSink<index_t>&                msink    = *multiseed_msink;
 	OutFileBuf*                      metricsOfb = multiseed_metricsOfb;
-    
+
+#ifdef PER_THREAD_TIMING
+	uint64_t ncpu_changeovers = 0;
+	uint64_t nnuma_changeovers = 0;
+
+	int current_cpu = 0, current_node = 0;
+	get_cpu_and_node(current_cpu, current_node);
+
+	std::stringstream ss;
+	std::string msg;
+	ss << "thread: " << tid << " time: ";
+	msg = ss.str();
+	Timer timer(std::cout, msg.c_str());
+#endif
+
 	// Sinks: these are so that we can print tables encoding counts for
 	// events of interest on a per-read, per-seed, per-join, or per-SW
 	// level.  These in turn can be used to diagnose performance
@@ -3013,10 +3029,21 @@ static void multiseedSearchWorker_hisat_bp(void *vp) {
 			if(sam_print_xt) {
 				gettimeofday(&prm.tv_beg, &prm.tz_beg);
 			}
+#ifdef PER_THREAD_TIMING
+			int cpu = 0, node = 0;
+			get_cpu_and_node(cpu, node);
+			if(cpu != current_cpu) {
+				ncpu_changeovers++;
+				current_cpu = cpu;
+			}
+			if(node != current_node) {
+				nnuma_changeovers++;
+				current_node = node;
+			}
+#endif
 			// Try to align this read
 			while(retry) {
 				retry = false;
-				assert_eq(ps->bufa().color, false);
 				ca.nextRead(); // clear the cache
 				olm.reads++;
 				assert(!ca.aligning());
@@ -3284,9 +3311,9 @@ static void multiseedSearchWorker_hisat_bp(void *vp) {
                 if(nthreads > 1 && useTempSpliceSite) {
                     // ThreadSafe t(&thread_rids_mutex, nthreads > 1);
                     assert_gt(tid, 0);
-                    assert_leq(tid, thread_rids.size());
-                    assert(thread_rids[tid - 1] == 0 || rdid > thread_rids[tid - 1]);
-                    thread_rids[tid - 1] = rdid;
+                    assert_leq(tid, (int)thread_rids.size());
+                    assert(thread_rids[tid] == 0 || rdid > thread_rids[tid]);
+                    thread_rids[tid] = rdid;
                 }
 			} // while(retry)
 		} // if(rdid >= skipReads && rdid < qUpto)
@@ -3304,7 +3331,15 @@ static void multiseedSearchWorker_hisat_bp(void *vp) {
 	
 	// One last metrics merge
 	MERGE_METRICS(metrics, nthreads > 1);
-    
+
+#ifdef PER_THREAD_TIMING
+	ss.str("");
+	ss.clear();
+	ss << "thread: " << tid << " cpu_changeovers: " << ncpu_changeovers << std::endl
+	   << "thread: " << tid << " node_changeovers: " << nnuma_changeovers << std::endl;
+	std::cout << ss.str();
+#endif
+	
 	return;
 }
 
@@ -3338,7 +3373,6 @@ static void multiseedSearch(
 		assert(!ebwtFw.isInMemory());
 		Timer _t(cerr, "Time loading forward index: ", timing);
 		ebwtFw.loadIntoMemory(
-			0,  // colorspace?
 			-1, // not the reverse index
 			true,         // load SA samp? (yes, need forward index's SA samp)
 			true,         // load ftab (in forward index)
@@ -3352,7 +3386,6 @@ static void multiseedSearch(
 		assert(!ebwtBw.isInMemory());
 		Timer _t(cerr, "Time loading mirror index: ", timing);
 		ebwtBw.loadIntoMemory(
-			0, // colorspace?
 			// It's bidirectional search, so we need the reverse to be
 			// constructed as the reverse of the concatenated strings.
 			1,
@@ -3374,7 +3407,7 @@ static void multiseedSearch(
 		for(int i = 0; i < nthreads; i++) {
 			// Thread IDs start at 1
 			tids[i] = i+1;
-            threads[i] = new tthread::thread(multiseedSearchWorker_hisat_bp, (void*)&tids[i]);
+            threads[i] = new std::thread(multiseedSearchWorker_hisat_bp, (void*)&tids[i]);
 		}
 
         for (int i = 0; i < nthreads; i++)
@@ -3418,14 +3451,15 @@ static void driver(
 		format,        // file format
 		fileParallel,  // true -> wrap files with separate PairedPatternSources
 		seed,          // pseudo-random seed
-		useSpinlock,   // use spin locks instead of pthreads
+		readsPerBatch, // # reads in a light parsing batch
+		io_buffer_size, // size reads to use when reading input		useSpinlock,   // use spin locks instead of pthreads
 		solexaQuals,   // true -> qualities are on solexa64 scale
 		phred64Quals,  // true -> qualities are on phred64 scale
 		integerQuals,  // true -> qualities are space-separated numbers
-		fuzzy,         // true -> try to parse fuzzy fastq
 		fastaContLen,  // length of sampled reads for FastaContinuous...
 		fastaContFreq, // frequency of sampled reads for FastaContinuous...
-		skipReads      // skip the first 'skip' patterns
+		skipReads,     // skip the first 'skip' patterns
+		nthreads       // # threads
 	);
 	if(gVerbose || startVerbose) {
 		cerr << "Creating PatternSource: "; logTime(cerr, true);
@@ -3444,12 +3478,6 @@ static void driver(
 	if(gVerbose || startVerbose) {
 		cerr << "Opening hit output file: "; logTime(cerr, true);
 	}
-	OutFileBuf *fout;
-	if(!outfile.empty()) {
-		fout = new OutFileBuf(outfile.c_str(), false);
-	} else {
-		fout = new OutFileBuf();
-	}
 	// Initialize Ebwt object and read in header
 	if(gVerbose || startVerbose) {
 		cerr << "About to initialize fw Ebwt: "; logTime(cerr, true);
@@ -3457,7 +3485,6 @@ static void driver(
 	adjIdxBase = adjustEbwtBase(argv0, bt2indexBase, gVerbose);
 	HierEbwt<index_t, local_index_t> ebwt(
 		adjIdxBase,
-	    0,        // index is colorspace
 		-1,       // fw index
 	    true,     // index is for the forward direction
 	    /* overriding: */ offRate,
@@ -3482,7 +3509,6 @@ static void driver(
 		}
 		ebwtBw = new HierEbwt<index_t, local_index_t>(
 			adjIdxBase + ".rev",
-			0,       // index is colorspace
 			1,       // TODO: maybe not
 		    false, // index is for the reverse direction
 		    /* overriding: */ offRate,
@@ -3522,7 +3548,8 @@ static void driver(
 		ebwt.evictFromMemory();
 	}
 	OutputQueue oq(
-		*fout,                   // out file buffer
+		outfile,                 // output file name
+		io_buffer_size,          // output buffer size
 		reorder && nthreads > 1, // whether to reorder when there's >1 thread
 		nthreads,                // # threads
 		nthreads > 1,            // whether to be thread-safe
@@ -3575,8 +3602,6 @@ static void driver(
 			sam_print_xss,
 			sam_print_yn,
 			sam_print_xn,
-			sam_print_cs,
-			sam_print_cq,
 			sam_print_x0,
 			sam_print_x1,
 			sam_print_xm,
@@ -3694,8 +3719,8 @@ static void driver(
 			*mssink, // hit sink
 			ebwt,    // BWT
 			*ebwtBw, // BWT'
-            refs.get(),
-                        refnames,
+			refs.get(),
+			refnames,
 			metricsOfb);
 		// Evict any loaded indexes from memory
 		if(ebwt.isInMemory()) {
@@ -3731,11 +3756,8 @@ static void driver(
 		assert_eq(oq.numStarted(), oq.numFlushed());
 		delete patsrc;
 		delete mssink;
-        delete ssdb;
+		delete ssdb;
 		delete metricsOfb;
-		if(fout != NULL) {
-			delete fout;
-		}
 	}
 }
 
@@ -3750,6 +3772,12 @@ extern "C" {
  */
 int hisat(int argc, const char **argv) {
 	try {
+#ifdef WITH_TBB
+#ifdef WITH_AFFINITY
+		pinning_observer pinner(2 /* hyper threads per core */);
+		pinner.observe(true);
+#endif
+#endif
 		// Reset all global state, including getopt state
 		opterr = optind = 1;
 		resetOptions();

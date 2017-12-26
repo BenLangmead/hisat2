@@ -1340,8 +1340,8 @@ struct SeedSearchMetrics {
 	 * category.  This is the only safe way to update a
 	 * SeedSearchMetrics object shread by multiple threads.
 	 */
-	void merge(const SeedSearchMetrics& m, bool getLock = false) {
-        ThreadSafe ts(&mutex_m, getLock);
+	void merge(const SeedSearchMetrics& m) {
+        ThreadSafe ts(mutex_m);
 		seedsearch   += m.seedsearch;
 		possearch    += m.possearch;
 		intrahit     += m.intrahit;
@@ -1624,7 +1624,7 @@ void SeedAligner<index_t>::instantiateSeq(
 	// If fw is false, we take characters starting at the 3' end of the
 	// reverse complement of the read.
 	for(int i = 0; i < len; i++) {
-		seq.set(read.patFw.windowGetDna(i, fw, read.color, depth, len), i);
+		seq.set(read.patFw.windowGetDna(i, fw, depth, len), i);
 		qual.set(read.qual.windowGet(i, fw, depth, len), i);
 	}
 }

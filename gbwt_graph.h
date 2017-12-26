@@ -499,13 +499,21 @@ RefGraph<index_t>::RefGraph(const SString<char>& s,
             if(nthreads == 1) {
                 buildGraph_worker((void*)&threadParams.back());
             } else {
+#ifdef WITH_TBB
+                tbb_grp.run(buildGraph_worker, (void*)&threadParams.back());
+#else
                 threads[i] = new tthread::thread(buildGraph_worker, (void*)&threadParams.back());
+#endif
             }
         }
 
         if(nthreads > 1) {
+#ifdef WITH_TBB
+            tbb_grp.wait();
+#else
             for(index_t i = 0; i < (index_t)nthreads; i++)
                 threads[i]->join();
+#endif
         }
 
         index_t num_nodes = 0, num_edges = 0;
@@ -2083,7 +2091,11 @@ void PathGraph<index_t>::createNewNodes() {
         if(nthreads == 1) {
             createNewNodesCounter((void*)&params[0]);
         } else {
+#ifdef WITH_TBB
+            tbb_grp.run(&createNewNodesCounter, (void*)&params[i]);
+#else
             threads[i] = new tthread::thread(&createNewNodesCounter, (void*)&params[i]);
+#endif
         }
         st = en;
         if(i + 2 == nthreads) {
@@ -2094,8 +2106,12 @@ void PathGraph<index_t>::createNewNodes() {
     }
 
     if(nthreads > 1) {
+#ifdef WITH_TBB
+        tbb_grp.wait();
+#else
         for(int i = 0; i < nthreads; i++)
             threads[i]->join();
+#endif
     }
     if(verbose) cerr << "COUNTED NEW NODES: " << time(0) - indiv << endl;
     indiv = time(0);
@@ -2127,13 +2143,21 @@ void PathGraph<index_t>::createNewNodes() {
         if(nthreads == 1) {
             createNewNodesMaker((void*)&params[0]);
         } else {
+#ifdef WITH_TBB
+            tbb_grp.run(&createNewNodesMaker, (void*)&params[i]);
+#else
             threads[i] = new tthread::thread(&createNewNodesMaker, (void*)&params[i]);
+#endif
         }
     }
 
     if(nthreads > 1) {
+#ifdef WITH_TBB
+        tbb_grp.wait();
+#else
         for(int i = 0; i < nthreads; i++)
             threads[i]->join();
+#endif
     }
     if(verbose) cerr << "MADE NEW NODES: " << time(0) - indiv << endl;
     indiv = time(0);
@@ -2407,7 +2431,11 @@ bool PathGraph<index_t>::generateEdges(RefGraph<index_t>& base)
         if(nthreads == 1) {
             generateEdgesCounter((void*)&params[0]);
         } else {
+#ifdef WITH_TBB
+            tbb_grp.run(&generateEdgesCounter, (void*)&params[i]);
+#else
             threads[i] = new tthread::thread(&generateEdgesCounter, (void*)&params[i]);
+#endif
         }
         st = en;
         if(i + 2 == nthreads) {
@@ -2418,8 +2446,12 @@ bool PathGraph<index_t>::generateEdges(RefGraph<index_t>& base)
     }
 
     if(nthreads > 1) {
+#ifdef WITH_TBB
+        tbb_grp.wait();
+#else
         for(int i = 0; i < nthreads; i++)
             threads[i]->join();
+#endif
     }
     
     if(verbose) cerr << "COUNTED NEW EDGES: " << time(0) - indiv << endl;
@@ -2443,14 +2475,22 @@ bool PathGraph<index_t>::generateEdges(RefGraph<index_t>& base)
         if(nthreads == 1) {
             generateEdgesMaker((void*)&params[0]);
         } else {
+#ifdef WITH_TBB
+            tbb_grp.run(&generateEdgesMaker, (void*)&params[i]);
+#else
             threads[i] = new tthread::thread(&generateEdgesMaker, (void*)&params[i]);
+#endif
         }
     }
 
     if(nthreads > 1) {
+#ifdef WITH_TBB
+        tbb_grp.wait();
+#else
         for(int i = 0; i < nthreads; i++) {
             threads[i]->join();
         }
+#endif
     }
     base.nullify();
 

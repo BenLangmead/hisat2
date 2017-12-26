@@ -45,7 +45,10 @@
 #include <iostream>
 #include <vector>
 
+#ifdef USE_MEM_TALLY
 MemoryTally gMemTally;
+#endif
+
 // Build parameters
 int verbose;
 static int sanityCheck;
@@ -277,10 +280,6 @@ static void parseOptions(int argc, const char **argv) {
 			case 'f': format = FASTA; break;
 			case 'c': format = CMDLINE; break;
 			//case 'p': packed = true; break;
-			case 'C':
-				cerr << "Error: -C specified but Bowtie 2 does not support colorspace input." << endl;
-				throw 1;
-				break;
 			case 'l':
 				lineRate = parseNumber<int>(3, "-l/--lineRate arg must be at least 3");
                 lineRate_provided = true;
@@ -572,6 +571,12 @@ extern "C" {
 int hisat2_build(int argc, const char **argv) {
     string outfile;
 	try {
+#ifdef WITH_TBB
+#ifdef WITH_AFFINITY
+		pinning_observer pinner(2 /* hyper threads per core */);
+		pinner.observe(true);
+#endif
+#endif
 		// Reset all global state, including getopt state
 		opterr = optind = 1;
 		resetOptions();

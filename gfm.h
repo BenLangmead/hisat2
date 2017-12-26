@@ -1093,7 +1093,7 @@ public:
 	{
         assert(!strs.empty());
 		EList<FileBuf*> is(EBWT_CAT);
-		RefReadInParams refparams(false /* color */, REF_READ_FORWARD, false, false);
+		RefReadInParams refparams(REF_READ_FORWARD, false, false);
 		// Adapt sequence strings to stringstreams open for input
 		auto_ptr<stringstream> ss(new stringstream());
 		for(index_t i = 0; i < strs.size(); i++) {
@@ -6222,7 +6222,7 @@ void GFM<index_t>::writeFromMemory(bool justHeader,
             cout << "Re-reading \"" << out1 << "\"/\"" << out2 << "\" for sanity check" << endl;
         Ebwt copy(out1, out2, _verbose, _sanity);
         assert(!isInMemory());
-        copy.loadIntoMemory(eh._color ? 1 : 0, true, false, false);
+        copy.loadIntoMemory(0, true, false, false);
         assert(isInMemory());
         assert_eq(eh._lineRate,     copy.eh()._lineRate);
         assert_eq(eh._offRate,      copy.eh()._offRate);

@@ -31,7 +31,9 @@
 
 using namespace std;
 
+#ifdef USE_MEM_TALLY
 MemoryTally gMemTally;
+#endif
 
 static bool showVersion = false; // just print version and quit?
 int verbose             = 0;  // be talkative
@@ -84,7 +86,7 @@ static void printUsage(ostream& out) {
 	<< endl
 	<< "  By default, prints FASTA records of the indexed nucleotide sequences to" << endl
 	<< "  standard out.  With -n, just prints names.  With -s, just prints a summary of" << endl
-	<< "  the index parameters and sequences.  With -e, preserves colors if applicable." << endl
+	<< "  the index parameters and sequences." << endl
 	<< endl
 	<< "Options:" << endl;
     if(wrapper == "basic-0") {
@@ -98,7 +100,7 @@ static void printUsage(ostream& out) {
     << "  --ss               Print splice sites" << endl
     << "  --ss-all           Print splice sites including those not in the global index" << endl
     << "  --exon             Print exons" << endl
-	<< "  -e/--ht2-ref       Reconstruct reference from ." << gfm_ext << " (slow, preserves colors)" << endl
+	<< "  -e/--ht2-ref       Reconstruct reference from ." << gfm_ext << " (slow)" << endl
 	<< "  -v/--verbose       Verbose output (for debugging)" << endl
 	<< "  -h/--help          print detailed description of tool and its options" << endl
 	<< "  --usage            print this usage message" << endl
@@ -241,7 +243,6 @@ static void print_ref_sequences(
 {
 	BitPairReference ref(
 		adjustedGFMFileBase, // input basename
-		false,                // true -> expect colorspace reference
 		false,                // sanity-check reference
 		NULL,                 // infiles
 		NULL,                 // originals

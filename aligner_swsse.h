@@ -41,8 +41,8 @@ struct SSEMetrics {
 		corerej = nrej = 0;
 	}
 
-	void merge(const SSEMetrics& o, bool getLock = false) {
-        ThreadSafe ts(&mutex_m, getLock);
+	void merge(const SSEMetrics& o) {
+		ThreadSafe ts(mutex_m);
 		dp       += o.dp;
 		dpsat    += o.dpsat;
 		dpfail   += o.dpfail;

@@ -58,13 +58,14 @@
 
 using namespace std;
 
+#ifdef USE_MEM_TALLY
 MemoryTally gMemTally;
+#endif
 
 static EList<string> mates1;  // mated reads (first mate)
 static EList<string> mates2;  // mated reads (second mate)
 static EList<string> mates12; // mated reads (1st/2nd interleaved in 1 file)
 static string adjIdxBase;
-bool gColor;              // colorspace (not supported)
 int gVerbose;             // be talkative
 static bool startVerbose; // be talkative at startup
 int gQuiet;               // print nothing but the alignments
@@ -94,7 +95,11 @@ static uint32_t khits;    // number of hits per read; >1 is much slower
 static uint32_t mhits;    // don't report any hits if there are > mhits
 static int partitionSz;   // output a partitioning key in first field
 static bool useSpinlock;  // false -> don't use of spinlocks even if they're #defines
+static int readsPerBatch; // # reads to read from input file at once
+static int blockBytes;    // bytes in a single input block
+static int readsPerBlock; // # reads in a single input block
 static bool fileParallel; // separate threads read separate input files in parallel
+static size_t io_buffer_size; // for setvbuf on input stream
 static bool useShmem;     // use shared memory to hold the index
 static bool useMm;        // use memory-mapped files to hold the index
 static bool mmSweep;      // sweep through memory-mapped files immediately after mapping
@@ -117,7 +122,6 @@ bool gNorc; // don't align rc orientation of read
 static uint32_t fastaContLen;
 static uint32_t fastaContFreq;
 static bool hadoopOut; // print Hadoop status and summary messages
-static bool fuzzy;
 static bool fullRef;
 static bool samTruncQname; // whether to truncate QNAME to 255 chars
 static bool samOmitSecSeqQual; // omit SEQ/QUAL for 2ndary alignments?
@@ -129,8 +133,6 @@ static bool sam_print_xs;  // XS:i
 static bool sam_print_xss; // Xs:i and Ys:i
 static bool sam_print_yn;  // YN:i and Yn:i
 static bool sam_print_xn;
-static bool sam_print_cs;
-static bool sam_print_cq;
 static bool sam_print_x0;
 static bool sam_print_x1;
 static bool sam_print_xm;
@@ -295,7 +297,6 @@ static void resetOptions() {
 	mates2.clear();
 	mates12.clear();
 	adjIdxBase	            = "";
-	gColor                  = false;
 	gVerbose                = 0;
 	startVerbose			= 0;
 	gQuiet					= false;
@@ -324,8 +325,12 @@ static void resetOptions() {
 	khits					= 10;    // number of hits per read; >1 is much slower
 	mhits					= 0;     // stop after finding this many alignments+1
 	partitionSz				= 0;     // output a partitioning key in first field
+	readsPerBatch			= 16;    // # reads to read from input file at once
+	blockBytes				= 0;     // bytes in a single input block
+	readsPerBlock			= 0;     // # reads in a single input block
 	useSpinlock				= true;  // false -> don't use of spinlocks even if they're #defines
 	fileParallel			= false; // separate threads read separate input files in parallel
+	io_buffer_size			= 512*1024; // for setvbuf on input/output stream
 	useShmem				= false; // use shared memory to hold the index
 	useMm					= false; // use memory-mapped files to hold the index
 	mmSweep					= false; // sweep through memory-mapped files immediately after mapping
@@ -349,7 +354,6 @@ static void resetOptions() {
 	fastaContLen			= 0;
 	fastaContFreq			= 0;
 	hadoopOut				= false; // print Hadoop status and summary messages
-	fuzzy					= false; // reads will have alternate basecalls w/ qualities
 	fullRef					= false; // print entire reference name instead of just up to 1st space
 	samTruncQname           = true;  // whether to truncate QNAME to 255 chars
 	samOmitSecSeqQual       = false; // omit SEQ/QUAL for 2ndary alignments?
@@ -361,8 +365,6 @@ static void resetOptions() {
 	sam_print_xss           = false; // Xs:i and Ys:i
 	sam_print_yn            = false; // YN:i and Yn:i
 	sam_print_xn            = true;
-	sam_print_cs            = false;
-	sam_print_cq            = false;
 	sam_print_x0            = true;
 	sam_print_x1            = true;
 	sam_print_xm            = true;
@@ -543,7 +545,11 @@ static struct option long_options[] = {
 	{(char*)"qupto",        required_argument, 0,            'u'},
 	{(char*)"upto",         required_argument, 0,            'u'},
 	{(char*)"version",      no_argument,       0,            ARG_VERSION},
+	{(char*)"reads-per-batch", required_argument, 0,         ARG_READS_PER_BATCH},
+	{(char*)"block-bytes",     required_argument, 0,         ARG_BLOCK_BYTES},
+	{(char*)"reads-per-block", required_argument, 0,         ARG_READS_PER_BLOCK},
 	{(char*)"filepar",      no_argument,       0,            ARG_FILEPAR},
+	{(char*)"buffer-size",  required_argument, 0,            ARG_BUFFER_SIZE},
 	{(char*)"help",         no_argument,       0,            'h'},
 	{(char*)"threads",      required_argument, 0,            'p'},
 	{(char*)"khits",        required_argument, 0,            'k'},
@@ -574,7 +580,6 @@ static struct option long_options[] = {
 	{(char*)"shmem",        no_argument,       0,            ARG_SHMEM},
 	{(char*)"mmsweep",      no_argument,       0,            ARG_MMSWEEP},
 	{(char*)"hadoopout",    no_argument,       0,            ARG_HADOOPOUT},
-	{(char*)"fuzzy",        no_argument,       0,            ARG_FUZZY},
 	{(char*)"fullref",      no_argument,       0,            ARG_FULLREF},
 	{(char*)"usage",        no_argument,       0,            ARG_USAGE},
 	{(char*)"sam-no-qname-trunc", no_argument, 0,            ARG_SAM_NO_QNAME_TRUNC},
@@ -593,7 +598,6 @@ static struct option long_options[] = {
 	{(char*)"no-HD",        no_argument,       0,            ARG_SAM_NOHEAD},
 	{(char*)"no-SQ",        no_argument,       0,            ARG_SAM_NOSQ},
 	{(char*)"no-unal",      no_argument,       0,            ARG_SAM_NO_UNAL},
-	{(char*)"color",        no_argument,       0,            'C'},
 	{(char*)"sam-RG",       required_argument, 0,            ARG_SAM_RG},
 	{(char*)"sam-rg",       required_argument, 0,            ARG_SAM_RG},
 	{(char*)"sam-rg-id",    required_argument, 0,            ARG_SAM_RGID},
@@ -1099,11 +1103,6 @@ static void parseOption(int next_option, const char *arg) {
 		case 'r': format = RAW; break;
 		case 'c': format = CMDLINE; break;
 		case ARG_QSEQ: format = QSEQ; break;
-		case 'C': {
-			cerr << "Error: -C specified but Bowtie 2 does not support colorspace input." << endl;
-			throw 1;
-			break;
-		}
 		case 'I':
 			gMinInsert = parseInt(0, "-I arg must be positive", arg);
 			break;
@@ -1148,7 +1147,6 @@ static void parseOption(int next_option, const char *arg) {
 			seedCacheCurrentMB = (uint32_t)parseInt(1, "--seed-cache-sz arg must be at least 1", arg);
 			break;
 		case ARG_REFIDX: noRefNames = true; break;
-		case ARG_FUZZY: fuzzy = true; break;
 		case ARG_FULLREF: fullRef = true; break;
 		case ARG_GAP_BAR:
 			gGapBarrier = parseInt(1, "--gbar must be no less than 1", arg);
@@ -1187,6 +1185,9 @@ static void parseOption(int next_option, const char *arg) {
 			break;
 		case ARG_FILEPAR:
 			fileParallel = true;
+			break;
+		case ARG_BUFFER_SIZE:
+			io_buffer_size = parseInt(1024, "--buffer-size arg must be at least 1024", arg);
 			break;
 		case '3': gTrim3 = parseInt(0, "-3/--trim3 arg must be at least 0", arg); break;
 		case '5': gTrim5 = parseInt(0, "-5/--trim5 arg must be at least 0", arg); break;
@@ -1358,6 +1359,15 @@ static void parseOption(int next_option, const char *arg) {
 			break;
 		}
 		case ARG_PARTITION: partitionSz = parse<int>(arg); break;
+		case ARG_READS_PER_BATCH:
+			readsPerBatch = parseInt(1, "--reads-per-batch arg must be at least 1", arg);
+			break;
+		case ARG_BLOCK_BYTES:
+			blockBytes = parseInt(0, "--block-bytes arg must be non-negative", arg);
+			break;
+		case ARG_READS_PER_BLOCK:
+			readsPerBlock = parseInt(0, "--reads-per-block arg must be non-negative", arg);
+			break;
 		case ARG_DPAD:
 			maxhalf = parseInt(0, "--dpad must be no less than 0", arg);
 			break;
@@ -1898,9 +1908,13 @@ static const char *argv0 = NULL;
 /// Create a PatternSourcePerThread for the current thread according
 /// to the global params and return a pointer to it
 static PatternSourcePerThreadFactory*
-createPatsrcFactory(PairedPatternSource& _patsrc, int tid) {
+createPatsrcFactory(
+					PatternComposer& patcomp,
+					const PatternParams& pp,
+					int tid)
+{
 	PatternSourcePerThreadFactory *patsrcFact;
-	patsrcFact = new WrappedPatternSourcePerThreadFactory(_patsrc);
+	patsrcFact = new PatternSourcePerThreadFactory(patcomp, pp);
 	assert(patsrcFact != NULL);
 	return patsrcFact;
 }
@@ -1909,7 +1923,8 @@ createPatsrcFactory(PairedPatternSource& _patsrc, int tid) {
 
 typedef TIndexOffU index_t;
 typedef uint16_t local_index_t;
-static PairedPatternSource*              multiseed_patsrc;
+static PatternComposer*                  multiseed_patsrc;
+static PatternParams                     multiseed_pp;
 static HGFM<index_t>*                    multiseed_gfm;
 static Scoring*                          multiseed_sc;
 static BitPairReference*                 multiseed_refs;
@@ -1943,11 +1958,8 @@ struct OuterLoopMetrics {
 	 * is the only safe way to update an OuterLoopMetrics that's shared
 	 * by multiple threads.
 	 */
-	void merge(
-		const OuterLoopMetrics& m,
-		bool getLock = false)
-	{
-		ThreadSafe ts(&mutex_m, getLock);
+	void merge(const OuterLoopMetrics& m) {
+		ThreadSafe ts(mutex_m);
 		reads += m.reads;
 		bases += m.bases;
 		srreads += m.srreads;
@@ -2029,45 +2041,45 @@ struct PerfMetrics {
 		uint64_t nbtfiltst_,
 		uint64_t nbtfiltsc_,
 		uint64_t nbtfiltdo_,
-        const HIMetrics *hi,
+		const HIMetrics *hi,
 		bool getLock)
 	{
-		ThreadSafe ts(&mutex_m, getLock);
+		ThreadSafe ts(mutex_m);
 		if(ol != NULL) {
-			olmu.merge(*ol, false);
+			olmu.merge(*ol);
 		}
 		if(sd != NULL) {
-			sdmu.merge(*sd, false);
+			sdmu.merge(*sd);
 		}
 		if(wl != NULL) {
-			wlmu.merge(*wl, false);
+			wlmu.merge(*wl);
 		}
 		if(swSeed != NULL) {
-			swmuSeed.merge(*swSeed, false);
+			swmuSeed.merge(*swSeed);
 		}
 		if(swMate != NULL) {
-			swmuMate.merge(*swMate, false);
+			swmuMate.merge(*swMate);
 		}
 		if(rm != NULL) {
-			rpmu.merge(*rm, false);
+			rpmu.merge(*rm);
 		}
 		if(dpSse8Ex != NULL) {
-			dpSse8uSeed.merge(*dpSse8Ex, false);
+			dpSse8uSeed.merge(*dpSse8Ex);
 		}
 		if(dpSse8Ma != NULL) {
-			dpSse8uMate.merge(*dpSse8Ma, false);
+			dpSse8uMate.merge(*dpSse8Ma);
 		}
 		if(dpSse16Ex != NULL) {
-			dpSse16uSeed.merge(*dpSse16Ex, false);
+			dpSse16uSeed.merge(*dpSse16Ex);
 		}
 		if(dpSse16Ma != NULL) {
-			dpSse16uMate.merge(*dpSse16Ma, false);
+			dpSse16uMate.merge(*dpSse16Ma);
 		}
 		nbtfiltst_u += nbtfiltst_;
 		nbtfiltsc_u += nbtfiltsc_;
 		nbtfiltdo_u += nbtfiltdo_;
         if(hi != NULL) {
-            him.merge(*hi, false);
+            him.merge(*hi);
         }
 	}
 
@@ -2080,10 +2092,9 @@ struct PerfMetrics {
 		OutFileBuf* o,        // file to send output to
 		bool metricsStderr,   // additionally output to stderr?
 		bool total,           // true -> report total, otherwise incremental
-		bool sync,            //  synchronize output
 		const BTString *name) // non-NULL name pointer if is per-read record
 	{
-		ThreadSafe ts(&mutex_m, sync);
+		ThreadSafe ts(mutex_m);
 		ostringstream stderrSs;
 		time_t curtime = time(0);
 		char buf[1024];
@@ -2770,6 +2781,7 @@ struct PerfMetrics {
 		if(metricsStderr) stderrSs << buf << '\t';
 		if(o != NULL) { o->writeChars(buf); o->write('\t'); }
 		
+#ifdef USE_MEM_TALLY
 		// 121. Overall memory peak
 		itoa10<size_t>(gMemTally.peak() >> 20, buf);
 		if(metricsStderr) stderrSs << buf << '\t';
@@ -2806,7 +2818,8 @@ struct PerfMetrics {
 		itoa10<size_t>(gMemTally.peak(DEBUG_CAT) >> 20, buf);
         if(metricsStderr) stderrSs << buf << '\t';
 		if(o != NULL) { o->writeChars(buf); o->write('\t'); }
-        
+#endif
+
         // 130
         itoa10<size_t>(him.localatts, buf);
 		if(metricsStderr) stderrSs << buf << '\t';
@@ -2842,15 +2855,15 @@ struct PerfMetrics {
 	}
 	
 	void mergeIncrementals() {
-		olm.merge(olmu, false);
-		sdm.merge(sdmu, false);
-		wlm.merge(wlmu, false);
-		swmSeed.merge(swmuSeed, false);
-		swmMate.merge(swmuMate, false);
-		dpSse8Seed.merge(dpSse8uSeed, false);
-		dpSse8Mate.merge(dpSse8uMate, false);
-		dpSse16Seed.merge(dpSse16uSeed, false);
-		dpSse16Mate.merge(dpSse16uMate, false);
+		olm.merge(olmu);
+		sdm.merge(sdmu);
+		wlm.merge(wlmu);
+		swmSeed.merge(swmuSeed);
+		swmMate.merge(swmuMate);
+		dpSse8Seed.merge(dpSse8uSeed);
+		dpSse8Mate.merge(dpSse8uMate);
+		dpSse16Seed.merge(dpSse16uSeed);
+		dpSse16Mate.merge(dpSse16uMate);
 		nbtfiltst_u += nbtfiltst;
 		nbtfiltsc_u += nbtfiltsc;
 		nbtfiltdo_u += nbtfiltdo;
@@ -2923,12 +2936,12 @@ static inline void printMmsSkipMsg(
 	ostringstream os;
 	if(paired) {
 		os << "Warning: skipping mate #" << (mate1 ? '1' : '2')
-		   << " of read '" << (mate1 ? ps.bufa().name : ps.bufb().name)
-		   << "' because length (" << (mate1 ? ps.bufa().patFw.length() : ps.bufb().patFw.length())
+		   << " of read '" << (mate1 ? ps.read_a().name : ps.read_b().name)
+		   << "' because length (" << (mate1 ? ps.read_a().patFw.length() : ps.read_b().patFw.length())
 		   << ") <= # seed mismatches (" << seedmms << ")" << endl;
 	} else {
-		os << "Warning: skipping read '" << (mate1 ? ps.bufa().name : ps.bufb().name)
-		   << "' because length (" << (mate1 ? ps.bufa().patFw.length() : ps.bufb().patFw.length())
+		os << "Warning: skipping read '" << (mate1 ? ps.read_a().name : ps.read_b().name)
+		   << "' because length (" << (mate1 ? ps.read_a().patFw.length() : ps.read_b().patFw.length())
 		   << ") <= # seed mismatches (" << seedmms << ")" << endl;
 	}
 	cerr << os.str().c_str();
@@ -2942,10 +2955,10 @@ static inline void printLenSkipMsg(
 	ostringstream os;
 	if(paired) {
 		os << "Warning: skipping mate #" << (mate1 ? '1' : '2')
-		   << " of read '" << (mate1 ? ps.bufa().name : ps.bufb().name)
+		   << " of read '" << (mate1 ? ps.read_a().name : ps.read_b().name)
 		   << "' because it was < 2 characters long" << endl;
 	} else {
-		os << "Warning: skipping read '" << (mate1 ? ps.bufa().name : ps.bufb().name)
+		os << "Warning: skipping read '" << (mate1 ? ps.read_a().name : ps.read_b().name)
 		   << "' because it was < 2 characters long" << endl;
 	}
 	cerr << os.str().c_str();
@@ -2960,11 +2973,11 @@ static inline void printLocalScoreMsg(
 	if(paired) {
 		os << "Warning: minimum score function gave negative number in "
 		   << "--local mode for mate #" << (mate1 ? '1' : '2')
-		   << " of read '" << (mate1 ? ps.bufa().name : ps.bufb().name)
+		   << " of read '" << (mate1 ? ps.read_a().name : ps.read_b().name)
 		   << "; setting to 0 instead" << endl;
 	} else {
 		os << "Warning: minimum score function gave negative number in "
-		   << "--local mode for read '" << (mate1 ? ps.bufa().name : ps.bufb().name)
+		   << "--local mode for read '" << (mate1 ? ps.read_a().name : ps.read_b().name)
 		   << "; setting to 0 instead" << endl;
 	}
 	cerr << os.str().c_str();
@@ -2979,11 +2992,11 @@ static inline void printEEScoreMsg(
 	if(paired) {
 		os << "Warning: minimum score function gave positive number in "
 		   << "--end-to-end mode for mate #" << (mate1 ? '1' : '2')
-		   << " of read '" << (mate1 ? ps.bufa().name : ps.bufb().name)
+		   << " of read '" << (mate1 ? ps.read_a().name : ps.read_b().name)
 		   << "; setting to 0 instead" << endl;
 	} else {
 		os << "Warning: minimum score function gave positive number in "
-		   << "--end-to-end mode for read '" << (mate1 ? ps.bufa().name : ps.bufb().name)
+		   << "--end-to-end mode for read '" << (mate1 ? ps.read_a().name : ps.read_b().name)
 		   << "; setting to 0 instead" << endl;
 	}
 	cerr << os.str().c_str();
@@ -3033,6 +3046,16 @@ static inline void printEEScoreMsg(
 	x.resetCounters(); \
 }
 
+#ifdef PER_THREAD_TIMING
+/// Based on http://stackoverflow.com/questions/16862620/numa-get-current-node-core
+void get_cpu_and_node(int& cpu, int& node) {
+	unsigned long a,d,c;
+	__asm__ volatile("rdtscp" : "=a" (a), "=d" (d), "=c" (c));
+	node = (c & 0xFFF000)>>12;
+	cpu = c & 0xFFF;
+}
+#endif
+
 /**
  * Called once per thread.  Sets up per-thread pointers to the shared global
  * data structures, creates per-thread structures, then enters the alignment
@@ -3050,22 +3073,39 @@ static inline void printEEScoreMsg(
  */
 static void multiseedSearchWorker_hisat2(void *vp) {
 	int tid = *((int*)vp);
+    assert_geq(tid, 0);
+    assert_lt(tid, nthreads);
 	assert(multiseed_gfm != NULL);
 	assert(multiseedMms == 0);
-	PairedPatternSource&             patsrc   = *multiseed_patsrc;
+	PatternComposer&                 patsrc   = *multiseed_patsrc;
+	PatternParams                    pp       = multiseed_pp;
 	const HGFM<index_t>&             gfm      = *multiseed_gfm;
 	const Scoring&                   sc       = *multiseed_sc;
     const BitPairReference&          ref      = *multiseed_refs;
 	AlnSink<index_t>&                msink    = *multiseed_msink;
 	OutFileBuf*                      metricsOfb = multiseed_metricsOfb;
-    
+
+#ifdef PER_THREAD_TIMING
+	uint64_t ncpu_changeovers = 0;
+	uint64_t nnuma_changeovers = 0;
+	
+	int current_cpu = 0, current_node = 0;
+	get_cpu_and_node(current_cpu, current_node);
+	
+	std::stringstream ss;
+	std::string msg;
+	ss << "thread: " << tid << " time: ";
+	msg = ss.str();
+	Timer timer(std::cout, msg.c_str());
+#endif
+
 	// Sinks: these are so that we can print tables encoding counts for
 	// events of interest on a per-read, per-seed, per-join, or per-SW
 	// level.  These in turn can be used to diagnose performance
 	// problems, or generally characterize performance.
 	
 	//const BitPairReference& refs   = *multiseed_refs;
-	auto_ptr<PatternSourcePerThreadFactory> patsrcFact(createPatsrcFactory(patsrc, tid));
+	auto_ptr<PatternSourcePerThreadFactory> patsrcFact(createPatsrcFactory(patsrc, pp, tid));
 	auto_ptr<PatternSourcePerThread> ps(patsrcFact->create());
 	
     // Instantiate an object for holding reporting-related parameters.
@@ -3168,9 +3208,11 @@ static void multiseedSearchWorker_hisat2(void *vp) {
 	rndArb.init((uint32_t)time(0));
 	int mergei = 0;
 	int mergeival = 16;
+	bool done = false;
 	while(true) {
-		bool success = false, done = false, paired = false;
-		ps->nextReadPair(success, done, paired, outType != OUTPUT_SAM);
+		pair<bool, bool> ret = ps->nextReadPair();
+		bool success = ret.first;
+		done = ret.second;
 		if(!success && done) {
 			break;
 		} else if(!success) {
@@ -3178,10 +3220,10 @@ static void multiseedSearchWorker_hisat2(void *vp) {
 		}
 		TReadId rdid = ps->rdid();
         if(nthreads > 1 && useTempSpliceSite) {
-            assert_gt(tid, 0);
-            assert_leq(tid, thread_rids.size());
-            assert(thread_rids[tid - 1] == 0 || rdid > thread_rids[tid - 1]);
-            thread_rids[tid - 1] = (rdid > 0 ? rdid - 1 : 0);
+            assert_geq(tid, 0);
+            assert_lt(tid, (int)thread_rids.size());
+            assert(thread_rids[tid] == 0 || rdid > thread_rids[tid]);
+            thread_rids[tid] = (rdid > 0 ? rdid - 1 : 0);
             while(true) {
                 uint64_t min_rdid = thread_rids[0];
                 {
@@ -3204,11 +3246,11 @@ static void multiseedSearchWorker_hisat2(void *vp) {
         
 		bool sample = true;
 		if(arbitraryRandom) {
-			ps->bufa().seed = rndArb.nextU32();
-			ps->bufb().seed = rndArb.nextU32();
+			ps->read_a().seed = rndArb.nextU32();
+			ps->read_b().seed = rndArb.nextU32();
 		}
 		if(sampleFrac < 1.0f) {
-			rnd.init(ROTL(ps->bufa().seed, 2));
+			rnd.init(ROTL(ps->read_a().seed, 2));
 			sample = rnd.nextFloat() < sampleFrac;
 		}
 		if(rdid >= skipReads && rdid < qUpto && sample) {
@@ -3231,7 +3273,7 @@ static void multiseedSearchWorker_hisat2(void *vp) {
 					// Only thread 1 prints progress messages
 					time_t curTime = time(0);
 					if(curTime - iTime >= metricsIval) {
-						metrics.reportInterval(metricsOfb, metricsStderr, false, true, NULL);
+						metrics.reportInterval(metricsOfb, metricsStderr, false, NULL);
 						iTime = curTime;
 					}
 				}
@@ -3241,18 +3283,29 @@ static void multiseedSearchWorker_hisat2(void *vp) {
 			if(sam_print_xt) {
 				gettimeofday(&prm.tv_beg, &prm.tz_beg);
 			}
+#ifdef PER_THREAD_TIMING
+			int cpu = 0, node = 0;
+			get_cpu_and_node(cpu, node);
+			if(cpu != current_cpu) {
+				ncpu_changeovers++;
+				current_cpu = cpu;
+			}
+			if(node != current_node) {
+				nnuma_changeovers++;
+				current_node = node;
+			}
+#endif
 			// Try to align this read
 			while(retry) {
 				retry = false;
-				assert_eq(ps->bufa().color, false);
 				olm.reads++;
-				bool pair = paired;
-				const size_t rdlen1 = ps->bufa().length();
-				const size_t rdlen2 = pair ? ps->bufb().length() : 0;
+				bool paired = !ps->read_b().empty();
+				const size_t rdlen1 = ps->read_a().length();
+				const size_t rdlen2 = paired ? ps->read_b().length() : 0;
 				olm.bases += (rdlen1 + rdlen2);
 				msinkwrap.nextRead(
-                                   &ps->bufa(),
-                                   pair ? &ps->bufb() : NULL,
+                                   &ps->read_a(),
+                                   paired ? &ps->read_b() : NULL,
                                    rdid,
                                    sc.qualitiesMatter());
 				assert(msinkwrap.inited());
@@ -3298,8 +3351,8 @@ static void multiseedSearchWorker_hisat2(void *vp) {
 				// N filter; does the read have too many Ns?
 				size_t readns[2] = {0, 0};
 				sc.nFilterPair(
-                               &ps->bufa().patFw,
-                               pair ? &ps->bufb().patFw : NULL,
+                               &ps->read_a().patFw,
+                               paired ? &ps->read_b().patFw : NULL,
                                readns[0],
                                readns[1],
                                nfilt[0],
@@ -3327,13 +3380,13 @@ static void multiseedSearchWorker_hisat2(void *vp) {
 				}
 				qcfilt[0] = qcfilt[1] = true;
 				if(qcFilter) {
-					qcfilt[0] = (ps->bufa().filter != '0');
-					qcfilt[1] = (ps->bufb().filter != '0');
+					qcfilt[0] = (ps->read_a().filter != '0');
+					qcfilt[1] = (ps->read_b().filter != '0');
 				}
 				filt[0] = (nfilt[0] && scfilt[0] && lenfilt[0] && qcfilt[0]);
 				filt[1] = (nfilt[1] && scfilt[1] && lenfilt[1] && qcfilt[1]);
 				prm.nFilt += (filt[0] ? 0 : 1) + (filt[1] ? 0 : 1);
-				Read* rds[2] = { &ps->bufa(), &ps->bufb() };
+				Read* rds[2] = { &ps->read_a(), &ps->read_b() };
 				// For each mate...
 				assert(msinkwrap.empty());
 				//size_t minedfw[2] = { 0, 0 };
@@ -3357,13 +3410,13 @@ static void multiseedSearchWorker_hisat2(void *vp) {
 				//size_t matemap[2] = { 0, 1 };
 				bool pairPostFilt = filt[0] && filt[1];
 				if(pairPostFilt) {
-					rnd.init(ps->bufa().seed ^ ps->bufb().seed);
+					rnd.init(ps->read_a().seed ^ ps->read_b().seed);
 				} else {
-					rnd.init(ps->bufa().seed);
+					rnd.init(ps->read_a().seed);
 				}
 				// Calculate interval length for both mates
 				int interval[2] = { 0, 0 };
-				for(size_t mate = 0; mate < (pair ? 2:1); mate++) {
+				for(size_t mate = 0; mate < (paired ? 2:1); mate++) {
 					interval[mate] = msIval.f<int>((double)rdlens[mate]);
 					if(filt[0] && filt[1]) {
 						// Boost interval length by 20% for paired-end reads
@@ -3407,14 +3460,14 @@ static void multiseedSearchWorker_hisat2(void *vp) {
 				}
 				assert_gt(nrounds[0], 0);
 				// Increment counters according to what got filtered
-				for(size_t mate = 0; mate < (pair ? 2:1); mate++) {
+				for(size_t mate = 0; mate < (paired ? 2:1); mate++) {
 					if(!filt[mate]) {
 						// Mate was rejected by N filter
 						olm.freads++;               // reads filtered out
 						olm.fbases += rdlens[mate]; // bases filtered out
 					} else {
 						//shs[mate].clear();
-						//shs[mate].nextRead(mate == 0 ? ps->bufa() : ps->bufb());
+						//shs[mate].nextRead(mate == 0 ? ps->read_a() : ps->read_b());
 						//assert(shs[mate].empty());
 						olm.ureads++;               // reads passing filter
 						olm.ubases += rdlens[mate]; // bases passing filter
@@ -3512,16 +3565,24 @@ static void multiseedSearchWorker_hisat2(void *vp) {
 		}
 		if(metricsPerRead) {
 			MERGE_METRICS(metricsPt, nthreads > 1);
-			nametmp = ps->bufa().name;
+			nametmp = ps->read_a().name;
 			metricsPt.reportInterval(
-                                     metricsOfb, metricsStderr, true, true, &nametmp);
+                                     metricsOfb, metricsStderr, true, &nametmp);
 			metricsPt.reset();
 		}
 	} // while(true)
 	
 	// One last metrics merge
 	MERGE_METRICS(metrics, nthreads > 1);
-    
+
+#ifdef PER_THREAD_TIMING
+	ss.str("");
+	ss.clear();
+	ss << "thread: " << tid << " cpu_changeovers: " << ncpu_changeovers << std::endl
+	<< "thread: " << tid << " node_changeovers: " << nnuma_changeovers << std::endl;
+	std::cout << ss.str();
+#endif
+
 	return;
 }
 
@@ -3534,21 +3595,27 @@ static void multiseedSearch(
                             Scoring& sc,
                             TranscriptomePolicy& tpol,
                             GraphPolicy& gp,
-                            PairedPatternSource& patsrc,  // pattern source
-                            AlnSink<index_t>& msink,      // hit sink
-                            HGFM<index_t>& gfm,           // index of original text
+                            const PatternParams& pp,
+                            PatternComposer& patsrc,   // pattern source
+                            AlnSink<index_t>& msink,   // hit sink
+                            HGFM<index_t>& gfm,        // index of original text
                             BitPairReference* refs,
                             OutFileBuf *metricsOfb)
 {
     multiseed_patsrc       = &patsrc;
 	multiseed_msink        = &msink;
+    multiseed_pp           = pp;
 	multiseed_gfm          = &gfm;
 	multiseed_sc           = &sc;
     multiseed_tpol         = &tpol;
     gpol                   = &gp;
 	multiseed_metricsOfb   = metricsOfb;
 	multiseed_refs = refs;
+#ifdef WITH_TBB
+    tbb::task_group tbb_grp;
+#else
 	AutoArray<tthread::thread*> threads(nthreads);
+#endif
 	AutoArray<int> tids(nthreads);	
 	// Start the metrics thread
 	{
@@ -3559,16 +3626,24 @@ static void multiseedSearch(
         thread_rids_mindist = (nthreads == 1 || !useTempSpliceSite ? 0 : 1000 * nthreads);        
 		for(int i = 0; i < nthreads; i++) {
 			// Thread IDs start at 1
-			tids[i] = i+1;
+			tids[i] = i;
+#ifdef WITH_TBB
+            tbb_grp.run(multiseedSearchWorker_hisat2, (void*)&tids[i]);
+#else
             threads[i] = new tthread::thread(multiseedSearchWorker_hisat2, (void*)&tids[i]);
+#endif
 		}
 
+#ifdef WITH_TBB
+        tbb_grp.wait();
+#else
         for (int i = 0; i < nthreads; i++)
             threads[i]->join();
+#endif
 
 	}
 	if(!metricsPerRead && (metricsOfb != NULL || metricsStderr)) {
-		metrics.reportInterval(metricsOfb, metricsStderr, true, false, NULL);
+		metrics.reportInterval(metricsOfb, metricsStderr, true, NULL);
 	}
 }
 
@@ -3604,19 +3679,25 @@ static void driver(
 		format,        // file format
 		fileParallel,  // true -> wrap files with separate PairedPatternSources
 		seed,          // pseudo-random seed
-		useSpinlock,   // use spin locks instead of pthreads
+		readsPerBatch, // # reads in a light parsing batch
+		io_buffer_size, // size reads to use when reading input
 		solexaQuals,   // true -> qualities are on solexa64 scale
 		phred64Quals,  // true -> qualities are on phred64 scale
 		integerQuals,  // true -> qualities are space-separated numbers
-		fuzzy,         // true -> try to parse fuzzy fastq
+		gTrim5,        // amt to hard clip from 5' end
+		gTrim3,        // amt to hard clip from 3' end
 		fastaContLen,  // length of sampled reads for FastaContinuous...
 		fastaContFreq, // frequency of sampled reads for FastaContinuous...
-		skipReads      // skip the first 'skip' patterns
+		skipReads,     // skip the first 'skip' patterns
+		nthreads,      // # threads
+		blockBytes,    // # bytes in one input block, 0 if we're not using blocked input
+		readsPerBlock, // # reads per input block, 0 if we're not using blockeds input
+		outType != OUTPUT_SAM // whether to fix mate names
 	);
 	if(gVerbose || startVerbose) {
 		cerr << "Creating PatternSource: "; logTime(cerr, true);
 	}
-	PairedPatternSource *patsrc = PairedPatternSource::setupPatternSources(
+	PatternComposer *patsrc = PatternComposer::setupPatternComposer(
 		queries,     // singles, from argv
 		mates1,      // mate1's, from -1 arg
 		mates2,      // mate2's, from -2 arg
@@ -3628,17 +3709,10 @@ static void driver(
 		qualities1,  // qualities associated with m1
 		qualities2,  // qualities associated with m2
 		pp,          // read read-in parameters
-        nthreads,
 		gVerbose || startVerbose); // be talkative
 	// Open hit output file
 	if(gVerbose || startVerbose) {
 		cerr << "Opening hit output file: "; logTime(cerr, true);
-	}
-	OutFileBuf *fout;
-	if(!outfile.empty()) {
-		fout = new OutFileBuf(outfile.c_str(), false);
-	} else {
-		fout = new OutFileBuf();
 	}
 	// Initialize GFM object and read in header
 	if(gVerbose || startVerbose) {
@@ -3703,10 +3777,12 @@ static void driver(
         else                    khits = 10;
     }
 	OutputQueue oq(
-		*fout,                   // out file buffer
+		outfile,                 // output file name
+		io_buffer_size,          // output buffer size
 		reorder && nthreads > 1, // whether to reorder when there's >1 thread
 		nthreads,                // # threads
 		nthreads > 1,            // whether to be thread-safe
+        readsPerBatch,           // size of output buffer of reads
 		skipReads);              // first read will have this rdid
 	{
 		Timer _t(cerr, "Time searching: ", timing);
@@ -3784,8 +3860,6 @@ static void driver(
 			sam_print_xss,
 			sam_print_yn,
 			sam_print_xn,
-			sam_print_cs,
-			sam_print_cq,
 			sam_print_x0,
 			sam_print_x1,
 			sam_print_xm,
@@ -3826,7 +3900,6 @@ static void driver(
         auto_ptr<BitPairReference> refs(
                                         new BitPairReference(
                                                              adjIdxBase,
-                                                             false,
                                                              sanityCheck,
                                                              NULL,
                                                              NULL,
@@ -3895,7 +3968,7 @@ static void driver(
 					bool printHd = true, printSq = true;
 					BTString buf;
 					samc.printHeader(buf, rgid, rgs, printHd, !samNoSQ, printSq);
-					fout->writeString(buf);
+					oq.writeString(buf);
 				}
 				break;
 			}
@@ -3915,14 +3988,15 @@ static void driver(
 		assert(patsrc != NULL);
 		assert(mssink != NULL);
 		multiseedSearch(
-                        sc,      // scoring scheme
-                        tpol,
-                        gpol,
-                        *patsrc, // pattern source
-                        *mssink, // hit sink
-                        gfm,     // BWT
-                        refs.get(),
-                        metricsOfb);
+			sc,      // scoring scheme
+			tpol,
+			gpol,
+			pp,
+			*patsrc, // pattern source
+			*mssink, // hit sink
+			gfm,     // BWT
+			refs.get(),
+			metricsOfb);
 		// Evict any loaded indexes from memory
 		if(gfm.isInMemory()) {
 			gfm.evictFromMemory();
@@ -3968,9 +4042,6 @@ static void driver(
         delete altdb;
         delete ssdb;
 		delete metricsOfb;
-		if(fout != NULL) {
-			delete fout;
-		}
 	}
 }
 
@@ -3985,6 +4056,12 @@ extern "C" {
  */
 int hisat2(int argc, const char **argv) {
 	try {
+#ifdef WITH_TBB
+#ifdef WITH_AFFINITY
+		pinning_observer pinner(2 /* hyper threads per core */);
+		pinner.observe(true);
+#endif
+#endif
 		// Reset all global state, including getopt state
 		opterr = optind = 1;
 		resetOptions();
@@ -4114,6 +4191,12 @@ int hisat2(int argc, const char **argv) {
 			}
 			driver<SString<char> >("DNA", bt2index, outfile);
 		}
+#ifdef WITH_TBB
+#ifdef WITH_AFFINITY
+		// Always disable observation before observers destruction
+		pinner.observe(false);
+#endif
+#endif
 		return 0;
 	} catch(std::exception& e) {
 		cerr << "Error: Encountered exception: '" << e.what() << "'" << endl;

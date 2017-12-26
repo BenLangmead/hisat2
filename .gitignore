@@ -27,4 +27,5 @@ hisat2_test/kim_example*.malignment.gcsa
 hisat2_test/genome*
 hisat2_test/2*
 hisat2_test/snp142*
-hisat2_test/testset*
+hisat2_test/testset*.idea
+.idea

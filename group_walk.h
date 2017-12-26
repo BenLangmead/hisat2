@@ -188,8 +188,8 @@ struct WalkMetrics {
 	 * Sum each across this object and 'm'.  This is the only safe way
 	 * to update a WalkMetrics shared by many threads.
 	 */
-	void merge(const WalkMetrics& m, bool getLock = false) {
-		ThreadSafe ts(&mutex_m, getLock);
+	void merge(const WalkMetrics& m) {
+		ThreadSafe ts(mutex_m);
 		bwops += m.bwops;
 		branches += m.branches;
 		resolves += m.resolves;

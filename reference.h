@@ -64,7 +64,6 @@ public:
 	 */
 	BitPairReference(
 		const string& in,
-		bool color,
 		bool sanity = false,
 		EList<string>* infiles = NULL,
 		EList<SString<char> >* origs = NULL,

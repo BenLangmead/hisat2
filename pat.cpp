@@ -1597,12 +1597,7 @@ static void SRA_IO_Worker(void *vp)
     
     while(!sra_data->done) {
         while(sra_data->isFull()) {
-#if defined(_TTHREAD_WIN32_)
-            Sleep(1);
-#elif defined(_TTHREAD_POSIX_)
-            const static timespec ts = {0, 1000000};  // 1 millisecond
-            nanosleep(&ts, NULL);
-#endif
+            SLEEP(1);
         }
         pair<SRA_Read, SRA_Read>& pair = sra_data->getPairForWrite();
         SRA_Read& ra = pair.first;
@@ -1702,12 +1697,7 @@ bool SRAPatternSource::readPair(
             return false;
         }
         
-#if defined(_TTHREAD_WIN32_)
-        Sleep(1);
-#elif defined(_TTHREAD_POSIX_)
-        const static timespec ts = {0, 1000000}; // 1 millisecond
-        nanosleep(&ts, NULL);
-#endif
+        SLEEP(1);
     }
     
     pair<SRA_Read, SRA_Read>& pair = sra_data_->getPairForRead();

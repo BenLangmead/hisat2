@@ -1803,12 +1803,7 @@ void HGFM<index_t, local_index_t>::gbwt_worker(void* vp)
         } else {
             while(tParam.done) {
                 if(tParam.last) return;
-#if defined(_TTHREAD_WIN32_)
-                Sleep(1);
-#elif defined(_TTHREAD_POSIX_)
-                const static timespec ts = {0, 1000000};  // 1 millisecond
-                nanosleep(&ts, NULL);
-#endif
+                SLEEP(1);
             }
             if(tParam.s.length() <= 0) {
                 tParam.done = true;
@@ -2307,12 +2302,7 @@ HGFM<index_t, local_index_t>::HGFM(
             for(index_t t2 = 0; t2 < t; t2++) {
                 ThreadParam& tParam = tParams[t2];
                 while(!tParam.done) {
-#if defined(_TTHREAD_WIN32_)
-                    Sleep(1);
-#elif defined(_TTHREAD_POSIX_)
-                    const static timespec ts = {0, 1000000};  // 1 millisecond
-                    nanosleep(&ts, NULL);
-#endif
+                    SLEEP(1);
                 }
  
                 LocalGFM<local_index_t, index_t>(
